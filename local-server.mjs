@@ -8,56 +8,25 @@ const __dirname = path.dirname(__filename);
 const port = Number(process.env.PORT || 4173);
 const dataDir = path.join(__dirname, 'data');
 const playlistsPath = path.join(dataDir, 'playlists.json');
+const PHP_API = process.env.PHP_API_URL || 'http://localhost:8080/api/music.php';
 
-const neteaseHeaders = {
-  Referer: 'https://music.163.com/',
-  'User-Agent': 'Mozilla/5.0',
-};
+// Cache for song URLs: id -> { url, expiresAt }
+const urlCache = new Map();
+const URL_CACHE_TTL = 1000 * 60 * 30; // 30 minutes
 
-const playableUrlCache = new Map();
+// Cache for search results
 const searchCache = new Map();
-const playableUrlCacheTtl = 1000 * 60 * 10;
-const searchCacheTtl = 1000 * 60 * 5;
-
-async function getNeteasePlayableUrl(id) {
-  const cached = playableUrlCache.get(id);
-  if (cached && cached.expiresAt > Date.now()) return cached.url;
-
-  const url = `https://music.163.com/api/song/enhance/player/url?id=${encodeURIComponent(id)}&ids=%5B${encodeURIComponent(id)}%5D&br=320000`;
-  const response = await fetch(url, { headers: neteaseHeaders });
-  const data = await response.json();
-  const playableUrl = data?.data?.[0]?.url || null;
-  playableUrlCache.set(id, { url: playableUrl, expiresAt: Date.now() + playableUrlCacheTtl });
-  return playableUrl;
-}
-
-async function filterPlayableSongs(rawSongs, resultLimit) {
-  const playableSongs = [];
-  const batchSize = 8;
-
-  for (let i = 0; i < rawSongs.length && playableSongs.length < resultLimit; i += batchSize) {
-    const batch = rawSongs.slice(i, i + batchSize);
-    const results = await Promise.all(batch.map(async (song) => ({
-      song,
-      playableUrl: await getNeteasePlayableUrl(String(song.id)),
-    })));
-
-    for (const result of results) {
-      if (result.playableUrl) playableSongs.push(result.song);
-      if (playableSongs.length >= resultLimit) break;
-    }
-  }
-
-  return playableSongs;
-}
+const SEARCH_CACHE_TTL = 1000 * 60 * 5;
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
+// ==================== PLAYLIST HANDLING ====================
+
 function createDefaultPlaylists() {
   return [
-    { id: 'favorites', name: 'Favorites', songs: [] },
-    { id: 'visual-set', name: 'Visual Set', songs: [] },
+    { id: 'favorites', name: '收藏', songs: [] },
+    { id: 'visual-set', name: '视觉集', songs: [] },
   ];
 }
 
@@ -95,140 +64,252 @@ app.put('/api/playlists', async (req, res) => {
     const playlists = await writePlaylistsFile(req.body?.playlists);
     res.json({ playlists });
   } catch (error) {
-    res.status(500).json({ error: 'Unable to save playlists' });
+    res.status(500).json({ error: '无法保存歌单' });
   }
 });
 
+// ==================== MUSIC STYLE CLASSIFICATION ====================
+// Maps song metadata to visual style hints for the player's adaptive theme system
+
+function classifySongStyle(song) {
+  const name = (song.name || '').toLowerCase();
+  const artist = (song.artists || song.artist || '').toLowerCase();
+  const duration = song.duration || 0;
+  const seconds = duration / 1000;
+
+  // Pre-classified artists with style profiles
+  const artistProfiles = [
+    // Rock / intense
+    { names: ['beyond', '五月天', '涅槃', 'nirvana', 'queen', 'linkin park', 
+              'metallica', 'green day', '崔健', '黑豹', '唐朝', '汪峰', '许巍',
+              '伍佰', 'guns n', 'ac/dc', 'rammstein', 'slipknot'], style: 'rock' },
+    // Ballad / lyrical
+    { names: ['陈百强', '陈慧娴',  '王菲', '邓丽君', '蔡琴', '齐豫', '周华健', 
+              '罗大佑', '李宗盛', '孟庭苇', '刘若英', '张雨生', '赵传',
+              '林忆莲', '张信哲', '任贤齐', '陈升', '陈绮贞', '张悬',
+              '刘德华', '张学友', '郭富城', '黎明', '谭咏麟', '张国荣',
+              '梅艳芳', '叶倩文', '林志炫', '周传雄', '游鸿明', '熊天平',
+              '苏芮', '潘越云', '辛晓琪', '万芳', '黄莺莺', '凤飞飞',
+              '费玉清', '蔡幸娟', '李翊君', '陈淑桦', '徐小凤', '关淑怡'], style: 'ballad' },
+    // Electronic / dance
+    { names: ['alan walker', 'daft punk', 'skrillex', 'avicii', 'marshmello',
+              '蔡依林', '罗百吉', 'deadmau5', 'martin garrix', 'the chainsmokers',
+              'kraftwerk', 'depeche mode'], style: 'electronic' },
+    // Ambient / instrumental
+    { names: ['久石让', '坂本龙一', 'yanni', '班得瑞', '林海', '石进',
+              '赵海洋', 'yiruma', 'ludovico', 'max richter', 'olafur',
+              'nils frahm', '钢琴', '古筝', '二胡', '琵琶', '笛子',
+              '萧', '古琴', '马友友', '神秘园', 'secret garden'], style: 'ambient' },
+  ];
+
+  for (const profile of artistProfiles) {
+    for (const n of profile.names) {
+      if (artist.includes(n)) return profile.style;
+    }
+  }
+
+  // Duration-based heuristics (more than 5 min → likely ballad, less than 2.5 min → likely upbeat)
+  if (seconds > 300) return 'ballad';
+  if (seconds < 150) return 'upbeat';
+
+  // Name keyword matching
+  const balladKws = ['情歌', '月亮', '温柔', '爱你', '吻别', '眼泪', '哭沙',
+                     '梦', '回忆', '浪漫', '传奇', '一生', '永远', '月亮',
+                     '心', '雨', '夜', '海', '花', '风', '云', '相思'];
+  const upbeatKws = ['跳', '舞', '动', '快', '跑', '飞', '燃烧', '热烈',
+                     'party', 'high', '摇滚', '节奏', '青春', '奔放'];
+
+  for (const kw of balladKws) {
+    if (name.includes(kw)) return 'ballad';
+  }
+  for (const kw of upbeatKws) {
+    if (name.includes(kw)) return 'upbeat';
+  }
+
+  return 'pop'; // default
+}
+
+// ==================== PHP API PROXY (full songs, no 30s preview) ====================
+
+// Search
 app.get('/api/netease/search', async (req, res) => {
   try {
     const keywords = String(req.query.keywords || '').trim();
-    const requestedLimit = Number(req.query.limit || '12');
-    const resultLimit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 20)) : 12;
+    const limit = Math.min(Number(req.query.limit) || 12, 20);
 
     if (!keywords) {
-      res.status(400).json({ error: 'Missing keywords' });
+      res.status(400).json({ error: '请输入搜索关键词' });
       return;
     }
 
-    const cacheKey = `${keywords.toLowerCase()}::${resultLimit}`;
+    const cacheKey = `${keywords.toLowerCase()}::${limit}`;
     const cached = searchCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       res.json({ songs: cached.songs, cached: true });
       return;
     }
 
-    const body = new URLSearchParams({
-      s: keywords,
-      type: '1',
-      offset: '0',
-      total: 'true',
-      limit: String(Math.min(resultLimit * 3, 60)),
-    });
+    const apiUrl = `${PHP_API}?type=search&keywords=${encodeURIComponent(keywords)}&limit=${limit * 3}`;
+    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
 
-    const response = await fetch('https://music.163.com/api/search/get/web', {
-      method: 'POST',
-      headers: {
-        ...neteaseHeaders,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body,
-    });
-    const data = await response.json();
-    const rawSongs = (data?.result?.songs || []).map((song) => ({
+    if (!response.ok) throw new Error(`PHP API search failed: ${response.status}`);
+
+    const body = await response.json();
+    const rawSongs = body?.data?.songs || [];
+
+    // Map PHP API format → frontend format with style classification
+    const songs = rawSongs.map((song) => ({
       id: song.id,
       name: song.name,
-      artist: (song.artists || []).map((artist) => artist.name).filter(Boolean).join(' / '),
-      album: song.album?.name || '',
+      artist: song.artists || '',
+      album: song.album || '',
       duration: song.duration || 0,
-      fee: song.fee,
-    }));
-    const songs = await filterPlayableSongs(rawSongs, resultLimit);
-    searchCache.set(cacheKey, { songs, expiresAt: Date.now() + searchCacheTtl });
+      picUrl: song.picUrl || '',
+      style: classifySongStyle(song),        // ← new: visual style hint
+      genre: song.genre || '',               // ← passthrough: Netease genre if available
+    })).slice(0, limit);
 
+    searchCache.set(cacheKey, { songs, expiresAt: Date.now() + SEARCH_CACHE_TTL });
     res.json({ songs });
   } catch (error) {
-    res.status(500).json({ error: 'Netease search failed' });
+    console.error('Search error:', error);
+    res.status(500).json({ error: '搜索失败' });
   }
 });
 
+// Lyric
 app.get('/api/netease/lyric', async (req, res) => {
   try {
     const id = String(req.query.id || '');
     if (!id) {
-      res.status(400).json({ error: 'Missing id' });
+      res.status(400).json({ error: '缺少歌曲ID' });
       return;
     }
 
-    const response = await fetch(`https://music.163.com/api/song/lyric?id=${encodeURIComponent(id)}&lv=-1&kv=-1&tv=-1`, {
-      headers: neteaseHeaders,
-    });
-    const data = await response.json();
+    const apiUrl = `${PHP_API}?type=lyric&id=${encodeURIComponent(id)}`;
+    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
+
+    if (!response.ok) throw new Error(`Lyric API failed: ${response.status}`);
+
+    const body = await response.json();
     res.json({
-      lyric: data?.lrc?.lyric || '',
-      translatedLyric: data?.tlyric?.lyric || '',
+      lyric: body?.data?.lrc?.lyric || '',
+      translatedLyric: body?.data?.tlyric?.lyric || '',
     });
   } catch (error) {
-    res.status(500).json({ error: 'Netease lyric failed' });
+    console.error('Lyric error:', error);
+    res.status(500).json({ error: '歌词获取失败' });
   }
 });
 
+// Song URL (for preloading check)
 app.get('/api/netease/url', async (req, res) => {
   try {
     const id = String(req.query.id || '');
     if (!id) {
-      res.status(400).json({ error: 'Missing id' });
+      res.status(400).json({ error: '缺少歌曲ID' });
       return;
     }
 
-    res.json({ url: await getNeteasePlayableUrl(id) });
+    const cached = urlCache.get(id);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.json({ url: cached.url });
+      return;
+    }
+
+    const apiUrl = `${PHP_API}?type=url&id=${encodeURIComponent(id)}`;
+    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
+
+    if (!response.ok) throw new Error(`URL API failed: ${response.status}`);
+
+    const body = await response.json();
+    const url = body?.data?.data?.[0]?.url || null;
+
+    if (url) {
+      urlCache.set(id, { url, expiresAt: Date.now() + URL_CACHE_TTL });
+    }
+
+    res.json({ url });
   } catch (error) {
-    res.status(500).json({ error: 'Netease url failed' });
+    console.error('URL error:', error);
+    res.status(500).json({ error: '获取播放地址失败' });
   }
 });
 
+// Audio proxy (streams the actual audio through Express to avoid mixed content)
 app.get('/api/netease/audio', async (req, res) => {
   try {
     const id = String(req.query.id || '');
     if (!id) {
-      res.status(400).json({ error: 'Missing id' });
+      res.status(400).json({ error: '缺少歌曲ID' });
       return;
     }
 
-    const playableUrl = await getNeteasePlayableUrl(id);
+    // Get URL from cache or PHP API
+    const cached = urlCache.get(id);
+    let playableUrl = cached?.expiresAt > Date.now() ? cached.url : null;
+
     if (!playableUrl) {
-      res.status(404).json({ error: 'No playable url for this song' });
+      const apiUrl = `${PHP_API}?type=url&id=${encodeURIComponent(id)}`;
+      const response = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error(`URL API failed: ${response.status}`);
+
+      const body = await response.json();
+      playableUrl = body?.data?.data?.[0]?.url || null;
+
+      if (playableUrl) {
+        urlCache.set(id, { url: playableUrl, expiresAt: Date.now() + URL_CACHE_TTL });
+      }
+    }
+
+    if (!playableUrl) {
+      res.status(404).json({ error: '该歌曲暂无可用播放源' });
       return;
     }
 
-    const headers = { ...neteaseHeaders };
+    const headers = {
+      Referer: 'https://music.163.com/',
+      'User-Agent': 'Mozilla/5.0',
+    };
     if (req.headers.range) headers.Range = req.headers.range;
 
-    const audioResponse = await fetch(playableUrl, { headers });
+    const audioResponse = await fetch(playableUrl, { headers, signal: AbortSignal.timeout(30000) });
     res.status(audioResponse.status);
+
     ['content-type', 'content-length', 'content-range', 'accept-ranges'].forEach((header) => {
       const value = audioResponse.headers.get(header);
       if (value) res.setHeader(header, value);
     });
 
     if (!res.getHeader('Content-Type')) res.setHeader('Content-Type', 'audio/mpeg');
+
     if (audioResponse.body) {
       const reader = audioResponse.body.getReader();
       const pump = async () => {
-        const { done, value } = await reader.read();
-        if (done) {
-          res.end();
-          return;
+        try {
+          const { done, value } = await reader.read();
+          if (done) { res.end(); return; }
+          res.write(Buffer.from(value), pump);
+        } catch (err) {
+          if (!res.headersSent) res.end();
         }
-        res.write(Buffer.from(value), pump);
       };
       pump();
     } else {
       res.end();
     }
   } catch (error) {
-    res.status(500).json({ error: 'Netease audio proxy failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: '音频流代理失败' });
+    }
   }
 });
+
+// ==================== STATIC & SPA ====================
+
+// Serve static audio files (outside dist/ so builds don't wipe them)
+const staticAudioDir = path.join(__dirname, 'static-audio');
+app.use('/static-audio', express.static(staticAudioDir));
 
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (_req, res) => {

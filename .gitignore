@@ -8,3 +8,6 @@ docs/
 *.log
 .env*
 !.env.example
+*.bak
+*.patch
+*.local
