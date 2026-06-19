@@ -65,6 +65,102 @@
 
 默认：`http://localhost:8080/api/music.php`（可通过 `PHP_API_URL` 环境变量配置）
 
+### 部署 PHP API
+
+如果你需要自建这个 API，以下是完整步骤：
+
+#### 环境要求
+
+- **PHP 8.0+**（推荐 8.1）
+- PHP 扩展：`curl`、`openssl`、`json`、`mbstring`
+
+```bash
+# Ubuntu/Debian 安装
+sudo apt install php8.1 php8.1-curl php8.1-mbstring php8.1-xml
+```
+
+#### 部署步骤
+
+```bash
+# 1. 创建目录
+mkdir -p /var/www/music-api/api
+cd /var/www/music-api
+
+# 2. 放入文件
+# 你需要两个文件：
+#   - music.php         ← 路由入口
+#   - api/getMusicapi.php  ← 核心加密引擎
+# 从本项目 api/ 目录（或仓库）获取
+
+# 3. 配置 Cookie（必填！否则 API 无法正常工作）
+# 从浏览器登录 music.163.com → F12 → 应用 → Cookies → 复制全部 Cookie
+# 粘贴到 api/cookie.txt
+vim api/cookie.txt
+# 内容格式示例：
+# JSESSIONID-WYYY=xxx; MUSIC_U=xxx; __remember_me=true
+```
+
+#### Nginx 配置示例
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    root /var/www/music-api;
+    index index.php;
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}
+```
+
+#### 验证部署
+
+```bash
+# 测试搜索
+curl "https://your-domain.com/api/music.php?type=search&keywords=周杰伦&limit=2"
+
+# 正常返回示例：
+# {"code":200,"msg":"success","data":{"songs":[...],"total":100}}
+```
+
+#### ⚠️ 重要注意事项
+
+| 问题 | 说明 | 解决 |
+|------|------|------|
+| **Cookie 过期** | 网易云 Cookie 会定期失效，一般 1-7 天 | 重新从浏览器复制 Cookie 到 `api/cookie.txt` |
+| **IP 风控** | 短时间大量请求可能被网易云封 IP | 添加请求频率限制，或使用代理池 |
+| **VIP 歌曲** | VIP/付费歌曲只能返回 30 秒试听或无权限 | 需要登录网易云音乐 VIP 账号的 Cookie |
+| **接口变更** | 网易云可能更新 eapi 加密参数 | `getMusicapi.php` 需要同步更新 |
+| **CORS** | `music.php` 已设置 `Access-Control-Allow-Origin: *` | 前端跨域直接可用 |
+| **路径** | `music.php` 通过 `require_once __DIR__ . '/getMusicapi.php'` 加载加密引擎 | 两个文件必须放在同一目录下 |
+
+#### Cookie 获取详细教程
+
+```
+1. 打开浏览器（Chrome/Edge）
+2. 访问 https://music.163.com 并登录你的账号
+3. F12 打开开发者工具 → Application/应用 → Cookies
+4. 全选 Cookie 列表，复制所有内容
+5. 粘贴到 api/cookie.txt 文件中保存
+6. 重启 Nginx/PHP-FPM（或等文件自动生效）
+```
+
+#### PHP API 文件结构
+
+```
+music-api/
+├── music.php              ← API 路由入口（公开接口）
+└── api/
+    ├── getMusicapi.php    ← 网易云加密引擎（核心）
+    └── cookie.txt         ← 网易云登录 Cookie（自行配置，不提交 Git）
+```
+
 ### 接口文档
 
 基础地址：`https://your-domain.com/api/music.php`
