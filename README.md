@@ -4,7 +4,7 @@
 
 ## ✨ 新特性（Lanhu Plus）
 
-- 🎵 **PHP API 代理** — 完整歌曲播放，无30秒预览限制
+- 🎵 **内置网易云 API** — 完整歌曲播放，无30秒预览限制，无需额外部署
 - 🎨 **智能风格分类** — 根据歌手/歌名/时长自动匹配视觉风格（摇滚、民谣、电子、氛围等）
 - 🎬 **视频渲染模式** — 支持 headless Chrome 录制可视化视频（WebM + FFmpeg 合成音频）
 - 🇨🇳 **全面汉化** — 中文界面、中文歌单名称
@@ -102,139 +102,83 @@ sonic-topography/
 
 ### 接口文档
 
-基础地址：`https://your-domain.com/api/music.php`
+所有 API 端点通过本地服务器提供（默认 `http://localhost:4173`），前端直接调用。
 
-**全部接口返回格式：**
-```json
-{
-  "code": 200,
-  "msg": "success",
-  "data": { ... }
-}
-```
-
-#### 1️⃣ 搜索歌曲
+#### 搜索歌曲
 
 ```
-GET ?type=search&keywords={关键词}&limit={数量}&offset={偏移量}
+GET /api/netease/search?keywords={关键词}&limit={数量}
 ```
 
 | 参数 | 必填 | 默认 | 说明 |
 |------|------|------|------|
 | `keywords` | ✅ | — | 搜索关键词（歌手/歌名） |
-| `limit` | ❌ | 10 | 返回数量，最大 100 |
-| `offset` | ❌ | 0 | 分页偏移量 |
-
-**示例：**
-```
-GET ?type=search&keywords=周杰伦&limit=5
-```
+| `limit` | ❌ | 12 | 返回数量，最大 20 |
 
 **响应示例：**
 ```json
 {
-  "code": 200,
-  "msg": "success",
-  "data": {
-    "songs": [
-      {
-        "id": 1315196858,
-        "name": "七里香",
-        "artists": "周杰伦",
-        "album": "七里香",
-        "duration": 297000,
-        "picUrl": "https://..."
-      }
-    ],
-    "total": 100
-  }
+  "songs": [
+    {
+      "id": 5257138,
+      "name": "屋顶",
+      "artist": "周杰伦 / 温岚",
+      "album": "男女情歌对唱冠军全记录",
+      "duration": 319039,
+      "picUrl": "https://p3.music.126.net/xxx.jpg?param=300y300",
+      "style": "ballad"
+    }
+  ]
 }
 ```
 
-#### 2️⃣ 获取歌曲播放链接
+`style` 字段为自动风格分类：`rock` / `ballad` / `electronic` / `ambient` / `upbeat` / `pop`
+
+#### 获取歌词
 
 ```
-GET ?type=url&id={歌曲ID}&level={音质}
+GET /api/netease/lyric?id={歌曲ID}
+```
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `id` | ✅ | 网易云歌曲 ID |
+
+**响应示例：**
+```json
+{
+  "lyric": "[00:00.00] 作曲 : 周杰伦...",
+  "translatedLyric": ""
+}
+```
+
+#### 获取播放链接
+
+```
+GET /api/netease/url?id={歌曲ID}&level={音质}
 ```
 
 | 参数 | 必填 | 默认 | 说明 |
 |------|------|------|------|
-| `id` | ✅ | — | 歌曲 ID（网易云） |
-| `level` | ❌ | `standard` | 音质：`standard`/`exhigh`/`lossless`/`hires` |
-
-**示例：**
-```
-GET ?type=url&id=1315196858&level=lossless
-```
+| `id` | ✅ | — | 歌曲 ID |
+| `level` | ❌ | `standard` | 音质：`standard` / `exhigh` / `lossless` / `hires` |
 
 **响应示例：**
 ```json
 {
-  "code": 200,
-  "msg": "success",
-  "data": {
-    "data": [{
-      "id": 1315196858,
-      "url": "https://...",
-      "br": 320000,
-      "size": 12345678,
-      "type": "mp3"
-    }]
-  }
+  "url": "http://m801.music.126.net/..."
 }
 ```
 
-#### 3️⃣ 获取歌曲详情
+> ⚠️ 需要配置网易云 Cookie 才能获取有效播放链接，否则返回 `null`。
+
+#### 音频代理
 
 ```
-GET ?type=detail&id={歌曲ID}
+GET /api/netease/audio?id={歌曲ID}&level={音质}
 ```
 
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `id` | ✅ | 歌曲 ID |
-
-#### 4️⃣ 获取歌词
-
-```
-GET ?type=lyric&id={歌曲ID}
-```
-
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `id` | ✅ | 歌曲 ID |
-
-**响应示例：**
-```json
-{
-  "code": 200,
-  "msg": "success",
-  "data": {
-    "lrc": { "lyric": "[00:00.00] 七里香..." },
-    "tlyric": { "lyric": "" }
-  }
-}
-```
-
-#### 5️⃣ 获取歌单
-
-```
-GET ?type=playlist&id={歌单ID}
-```
-
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `id` | ✅ | 网易云歌单 ID |
-
-#### 6️⃣ 获取专辑
-
-```
-GET ?type=album&id={专辑ID}
-```
-
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `id` | ✅ | 网易云专辑 ID |
+流式代理网易云音频到前端（解决跨域和混合内容问题），直接返回音频流。`level` 参数可选。
 
 ---
 
@@ -244,7 +188,6 @@ GET ?type=album&id={专辑ID}
 
 - [Node.js](https://nodejs.org/) v18+
 - （推荐）npm v9+
-- （可选）自建 PHP API 服务器（用于网易云音乐完整播放）
 - （可选）FFmpeg（用于视频渲染音频合成）
 
 ### 快速开始
@@ -275,16 +218,6 @@ npm start
 3. 自动 `npm run build` 构建
 4. 打开浏览器 `http://127.0.0.1:4173`
 5. 启动本地服务器
-
-### 配置 PHP API
-
-项目需要后端 API 才能播放完整歌曲。部署 PHP API：
-
-```bash
-# 以 Nginx + PHP 为例，将 api/ 目录部署到你的服务器
-# 然后在启动 Sonic Topography 时设置环境变量：
-PHP_API_URL=https://your-domain.com/api/music.php npm start
-```
 
 ### 环境变量
 
@@ -338,7 +271,7 @@ sonic-topography/
 ├── public/                  # 静态资源
 ├── static-audio/            # 内置演示音频
 ├── data/                    # 运行时数据（歌单等，不提交 Git）
-├── local-server.mjs         # 生产服务器（Express + API 代理）
+├── local-server.mjs         # 生产服务器（Express + 内置网易云 API）
 ├── vite.config.ts           # Vite 构建配置
 └── start-sonic-topography.bat  # Windows 一键启动
 ```
