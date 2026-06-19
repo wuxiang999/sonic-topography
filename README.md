@@ -1,94 +1,101 @@
-# Sonic Topography
+# Sonic Topography — Lanhu Plus 🎵🌊
 
-Sonic Topography 是一个本地音乐可视化程序，使用 React、Three.js、Vite 和 Web Audio 构建。它可以播放本地 Demo、上传音频和 `.lrc` 歌词、通过本地代理搜索网易云音乐、保存浏览器本地歌单，并用音频频谱驱动地形、波纹和流星效果。
+> 基于 Sonic Topography 的增强版，3D 音乐可视化 + 完整网易云音乐播放器
+
+## ✨ 新特性（Lanhu Plus）
+
+- 🎵 **PHP API 代理** — 完整歌曲播放，无30秒预览限制（需自建 `music.php` API）
+- 🎨 **智能风格分类** — 根据歌手/歌名/时长自动匹配视觉风格（摇滚、民谣、电子、氛围等）
+- 🎬 **视频渲染模式** — 支持 headless Chrome 录制可视化视频（WebM + FFmpeg 合成音频）
+- 🇨🇳 **全面汉化** — 中文界面、中文歌单名称
+- 📊 **性能自适应** — 检测设备性能自动调整画质（低/中/高三档）
+- 📝 **歌词翻译** — 支持显示网易云翻译歌词
+- 💾 **歌单持久化** — 本地 `data/playlists.json` 存储，重启不丢失
+- 🎮 **自定义 Demo** — 内置 `grey-track.mp3` 演示曲
 
 ## 功能
 
-- 3D 音频响应式地形可视化
-- 内置 Demo 音频和同步 LRC 歌词
-- 支持上传音频和 `.lrc` 歌词
-- 网易云音乐搜索，并过滤不可播放结果
-- 通过本地代理加载歌词和音频
-- 歌单保存到本地 `data/playlists.json`，浏览器 `localStorage` 作为兜底
-- 支持删除歌单歌曲、删除歌单，并带确认弹窗
-- 支持上一首、下一首
-- 支持顺序播放和随机播放
+- 3D 音频响应式地形可视化（Three.js + React Three Fiber）
+- 内置 Demo 音频播放
+- 支持上传音频文件和 `.lrc` 歌词
+- 网易云音乐搜索、过滤不可播放结果
+- 歌词加载、翻译歌词显示
+- 歌单管理（收藏/视觉集）、新增/删除/排序
+- 上一首/下一首、顺序播放/随机播放
 - Windows 一键启动脚本
 
-## Windows 一键启动
+## 快速开始
 
-前提：电脑需要先安装 Node.js。
+### 前置条件
 
-下载或克隆本仓库后，双击：
+- [Node.js](https://nodejs.org/) (v18+)
+- （可选）自建 PHP API 代理，用于完整歌曲播放
 
-```text
-start-sonic-topography.bat
-```
+### 安装与运行
 
-启动脚本会自动：
+```bash
+# 克隆仓库
+git clone https://github.com/wuxiang999/sonic-topography.git
+cd sonic-topography
 
-1. 如果没有 `node_modules/`，自动安装依赖；
-2. 如果没有 `dist/`，自动构建项目；
-3. 打开 `http://127.0.0.1:4173`；
-4. 启动带网易云代理功能的本地生产服务器。
-
-## 开发运行
-
-```powershell
+# 安装依赖
 npm install
+
+# 开发模式
 npm run dev
-```
 
-打开：
-
-```text
-http://127.0.0.1:3000
-```
-
-## 本地生产运行
-
-```powershell
+# 生产构建
 npm run build
 npm start
 ```
 
-打开：
+打开浏览器访问 `http://localhost:4173`（生产）或 `http://localhost:3000`（开发）。
 
-```text
-http://127.0.0.1:4173
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `PORT` | 生产服务器端口 | `4173` |
+| `PHP_API_URL` | 音乐 API 代理地址 | `http://localhost:8080/api/music.php` |
+| `RENDER_BASE_URL` | 视频渲染模式的基础 URL | `http://localhost:4173/music/` |
+| `CHROME_PATH` | 视频渲染用的 Chrome 路径 | 自动检测 |
+
+### Windows 一键启动
+
+双击 `start-sonic-topography.bat`，自动安装依赖、构建、启动服务。
+
+## 视频渲染
+
+```bash
+cd scripts
+npm install
+node render-video.mjs [时长秒数] [输出路径]
 ```
 
-## Demo 文件
+需要安装 Puppeteer 和 FFmpeg。
 
-内置 Demo 文件在：
+## 项目结构
 
-```text
-public/demo.mp3
-public/demo.lrc
 ```
-
-如果要替换 Demo，请保持这两个文件名不变。
-
-## 给别人使用
-
-对方可以下载 GitHub 仓库 ZIP，解压后双击：
-
-```text
-start-sonic-topography.bat
+sonic-topography/
+├── src/              # React 前端源码
+│   ├── components/   # UI 组件 + 3D 可视化
+│   ├── lib/          # 工具库（AudioEngine、主题、性能检测等）
+│   ├── App.tsx       # 主应用组件
+│   └── main.tsx      # 入口
+├── scripts/          # 工具脚本（视频渲染等）
+├── static-audio/     # 内置音频文件
+├── data/             # 运行时数据（歌单等，不提交）
+├── local-server.mjs  # 生产服务器（含 API 代理）
+└── vite.config.ts    # Vite 配置
 ```
-
-注意：这不是完全独立的 `.exe`，对方电脑仍然需要安装 Node.js。
 
 ## 注意事项
 
-- 网易云音乐功能使用的是非官方网页接口，并通过本地服务器代理请求。搜索结果会尽量只显示当前可播放的歌曲，但可播放状态仍可能因为版权、会员、地区或登录限制发生变化。
-- 歌单优先保存在本地文件 `data/playlists.json`。只要保留项目文件夹，重启应用后歌单还在；浏览器 `localStorage` 只作为兜底。
-- `start-sonic-topography.bat` 会在本地启动服务，默认地址是 `http://127.0.0.1:4173`。
+- 网易云音乐功能使用的是非官方网页接口，通过本地服务器代理请求
+- 可播放状态可能因版权、会员、地区或登录限制发生变化
+- `data/` 目录下的歌单文件是本地数据，**不要提交到 Git**
 
-## 常用命令
+## License
 
-```powershell
-npm run lint
-npm run build
-npm start
-```
+MIT
