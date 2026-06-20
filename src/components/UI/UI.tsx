@@ -502,7 +502,7 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
       {!isMobile && (
         <>
           {/* Sidebar Left */}
-          <div className="absolute left-0 top-0 h-full w-[20px] z-[60] group hover:w-[60px] transition-all pointer-events-auto">
+          <div className="absolute left-0 top-0 h-full w-[40px] z-[60] group hover:w-[80px] transition-all pointer-events-auto">
             <aside className="absolute left-0 top-0 w-[60px] h-full border-r border-white/5 flex flex-col items-center py-6 pointer-events-auto -translate-x-full group-hover:translate-x-0 transition-transform duration-300" style={{ background: 'rgba(2,4,10,0.8)' }}>
               <button className="uppercase tracking-[0.2em] text-[10px] mb-12 opacity-100 transition-opacity cursor-pointer" style={{ writingMode: 'vertical-rl', color: accentHex }}>可视化</button>
               <button onClick={() => setShowFreqPanel(true)} className="uppercase tracking-[0.2em] text-[10px] mb-12 opacity-40 hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center gap-2" style={{ writingMode: 'vertical-rl' }}>
