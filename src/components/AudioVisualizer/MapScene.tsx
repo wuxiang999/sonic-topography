@@ -165,7 +165,7 @@ export function MapScene({
     const idx = rippleIndex.current;
     const slot = ripplesRef.current[idx];
     slot.pos.set(x, y);
-    slot.time = clock.getElapsedTime();
+    slot.time = clock.elapsedTime;
     slot.strength = strength;
     slot.isActive = 1;
     slot.rippleType = isWhite ? 1 : 0;
@@ -226,7 +226,7 @@ export function MapScene({
   const lastMeteorSpawnTime = useRef(-Infinity);
 
   const addMeteor = (strength: number) => {
-    const now = clock.getElapsedTime();
+    const now = clock.elapsedTime;
     const cooldownSeconds = engine.meteorTrigger.cooldown / 60;
     if (now - lastMeteorSpawnTime.current < cooldownSeconds) return;
     lastMeteorSpawnTime.current = now;
@@ -316,7 +316,7 @@ export function MapScene({
     }
 
     // ── Shader uniforms ────────────────────────────────────────
-    mat.uTime = state.clock.getElapsedTime();
+    mat.uTime = state.clock.elapsedTime;
     mat.uBass = data.bass;
     mat.uMid = data.mid;
     mat.uTreble = data.treble;
