@@ -546,7 +546,7 @@ export default function App() {
     : '#0a0a12';
 
   // Auto-detect device performance
-  const perf = getDevicePerformance(isMobile);
+  const perf = getDevicePerformance();
 
   // Render mode: forced quality, normal mode: auto-detect
   const canvasDpr = renderMode ? [1, 1] : perf.dpr;
@@ -578,7 +578,7 @@ export default function App() {
           performance={canvasPerf}
           gl={canvasGl}
         >
-          <MapScene theme={theme} isMobile={false} perfLevel={perf.perfLevel} coverUrl={currentCover} />
+          <MapScene theme={theme} isMobile={isMobile} perfLevel={perf.perfLevel} coverUrl={currentCover} />
         </Canvas>
       </div>
       {renderMode && (

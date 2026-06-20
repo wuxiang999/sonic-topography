@@ -13,7 +13,7 @@ export interface DevicePerfConfig {
 
 let cachedConfig: DevicePerfConfig | null = null;
 
-export function getDevicePerformance(isMobile: boolean): DevicePerfConfig {
+export function getDevicePerformance(): DevicePerfConfig {
   if (cachedConfig) return cachedConfig;
 
   if (typeof window === 'undefined') {
@@ -23,10 +23,10 @@ export function getDevicePerformance(isMobile: boolean): DevicePerfConfig {
       dpr: [1, 1],
       antialias: false,
       powerPreference: 'high-performance',
-      gridSize: isMobile ? 80 : 130,
-      maxMeteors: isMobile ? 6 : 15,
-      maxParticles: isMobile ? 20 : 100,
-      frameSkip: isMobile ? 1 : 0,
+      gridSize: 80,
+      maxMeteors: 6,
+      maxParticles: 20,
+      frameSkip: 1,
     };
     return cachedConfig;
   }
@@ -80,10 +80,10 @@ export function getDevicePerformance(isMobile: boolean): DevicePerfConfig {
       dpr: [1, 2],
       antialias: true,
       powerPreference: 'high-performance',
-      gridSize: isMobile ? 100 : 160,
-      maxMeteors: isMobile ? 8 : 20,
-      maxParticles: isMobile ? 40 : 200,
-      frameSkip: isMobile ? 1 : 0,
+      gridSize: 100,
+      maxMeteors: 8,
+      maxParticles: 40,
+      frameSkip: 1,
     };
   } else if (score >= 0) {
     cachedConfig = {
@@ -91,10 +91,10 @@ export function getDevicePerformance(isMobile: boolean): DevicePerfConfig {
       dpr: [0.75, 1.5],
       antialias: false,
       powerPreference: 'high-performance',
-      gridSize: isMobile ? 80 : 130,
-      maxMeteors: isMobile ? 5 : 12,
-      maxParticles: isMobile ? 15 : 80,
-      frameSkip: isMobile ? 1 : 0,
+      gridSize: 80,
+      maxMeteors: 5,
+      maxParticles: 15,
+      frameSkip: 1,
     };
   } else {
     cachedConfig = {
@@ -102,9 +102,9 @@ export function getDevicePerformance(isMobile: boolean): DevicePerfConfig {
       dpr: [0.5, 1],
       antialias: false,
       powerPreference: 'low-power',
-      gridSize: isMobile ? 50 : 90,
-      maxMeteors: isMobile ? 3 : 8,
-      maxParticles: isMobile ? 8 : 40,
+      gridSize: 50,
+      maxMeteors: 3,
+      maxParticles: 8,
       frameSkip: 2,
     };
   }

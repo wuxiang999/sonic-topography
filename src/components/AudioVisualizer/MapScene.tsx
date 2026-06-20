@@ -81,7 +81,7 @@ export function MapScene({
   const controlsRef = useRef<OrbitControls>(null!);
   const { clock } = useThree();
 
-  const gridSize = getPerfValue(perfLevel, isMobile ? [50, 80, 100] : [90, 130, 160]);
+  const gridSize = getPerfValue(perfLevel, [50, 80, 100]);
   const spacing = isMobile ? 1.1 : 1.05;
 
   // ── Grid chunking for per-chunk frustum culling ──────────
@@ -143,7 +143,7 @@ export function MapScene({
   const autoThemeRef = useRef('nocturnal');
 
   // ── Ripples logic ──────────────────────────────────────────────
-  const MAX_RIPPLES = isMobile ? 3 : 10;
+  const MAX_RIPPLES = getPerfValue(perfLevel, [3, 6, 10]);
   const ripplesRef = useRef(new Array(MAX_RIPPLES).fill(null).map(() => ({
     pos: new THREE.Vector2(),
     time: -100,
@@ -177,15 +177,15 @@ export function MapScene({
 
   // ── Frame skipping on mobile ───────────────────────────────────
   const frameCount = useRef(0);
-  const FRAME_SKIP = getPerfValue(perfLevel, [2, isMobile ? 1 : 0, isMobile ? 1 : 0]);
+  const FRAME_SKIP = getPerfValue(perfLevel, [2, 1, 0]);
 
   // ── Meteors ────────────────────────────────────────────────────
-  const MAX_METEORS = getPerfValue(perfLevel, isMobile ? [3, 5, 8] : [8, 12, 20]);
+  const MAX_METEORS = getPerfValue(perfLevel, [3, 5, 8]);
   const meteorMeshRef = useRef<THREE.InstancedMesh>(null);
   const meteorMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const meteorTargetColorRef = useRef(new THREE.Color(0xffffff));
 
-  const MAX_PARTICLES = getPerfValue(perfLevel, isMobile ? [8, 15, 40] : [40, 80, 200]);
+  const MAX_PARTICLES = getPerfValue(perfLevel, [8, 15, 40]);
   const particleMeshRef = useRef<THREE.InstancedMesh>(null);
   const particleMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const particlesRef = useRef(new Array(MAX_PARTICLES).fill(null).map(() => ({
