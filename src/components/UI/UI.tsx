@@ -95,6 +95,8 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
   const [playQueue, setPlayQueue] = useState<NeteaseSong[]>([]);
   const [currentSongId, setCurrentSongId] = useState<number | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [audioEnergy, setAudioEnergy] = useState(0);
+  const lineHueRef = useRef(200);
   const hasLoadedPlaylistsRef = useRef(false);
 
   // Mobile-specific state
@@ -479,6 +481,19 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
     };
   }, []);
 
+  // Audio-reactive vertical line — poll engine for energy level
+  useEffect(() => {
+    let rafId: number;
+    const update = () => {
+      const data = engine.getAudioData();
+      setAudioEnergy(data.energy || 0);
+      lineHueRef.current = 200 + (data.bass || 0) * 80;
+      rafId = requestAnimationFrame(update);
+    };
+    rafId = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
+
   const t = themes[theme] || themes['nocturnal'];
   const accentHex = `#${t.uRippleColor.getHexString()}`;
   const [currentCover, setCurrentCover] = useState('');
@@ -501,6 +516,18 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
       {/* ==================== DESKTOP LAYOUT ==================== */}
       {!isMobile && (
         <>
+          {/* Audio-reactive menu indicator */}
+          <div className="absolute left-0 top-0 h-full w-[4px] z-[61] pointer-events-none overflow-hidden"
+            style={{ opacity: 0.25 + audioEnergy * 0.75 }}>
+            <div className="absolute inset-y-[15%] left-0 w-[2px] rounded-r-full transition-all duration-75"
+              style={{
+                background: audioEnergy > 0.02
+                  ? 'linear-gradient(180deg, transparent, hsl(' + lineHueRef.current + ',70%,' + (35 + audioEnergy * 45) + '%) 25%, hsl(' + (lineHueRef.current + 40) + ',75%,' + (45 + audioEnergy * 35) + '%) 75%, transparent)'
+                  : 'linear-gradient(180deg, transparent, rgba(255,255,255,0.12) 25%, rgba(255,255,255,0.18) 75%, transparent)',
+                boxShadow: audioEnergy > 0.02 ? '0 0 10px hsla(' + lineHueRef.current + ',70%,60%,' + (0.1 + audioEnergy * 0.35) + ')' : 'none',
+              }} />
+          </div>
+
           {/* Sidebar Left */}
           <div className="absolute left-0 top-0 h-full w-[40px] z-[60] group hover:w-[80px] transition-all pointer-events-auto">
             <aside className="absolute left-0 top-0 w-[60px] h-full border-r border-white/5 flex flex-col items-center py-6 pointer-events-auto -translate-x-full group-hover:translate-x-0 transition-transform duration-300" style={{ background: 'rgba(2,4,10,0.8)' }}>
