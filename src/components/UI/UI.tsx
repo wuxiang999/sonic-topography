@@ -127,6 +127,7 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange }: UI
   const [showSettings, setShowSettings] = useState(false);
   const [barCount, setBarCount] = useState(64);
   const [maxHistoryItems, setMaxHistoryItems] = useState(50);
+  const [showStats, setShowStats] = useState(true);
 
   useEffect(() => {
     if (!hasLoadedPlaylistsRef.current) return;
@@ -736,7 +737,7 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange }: UI
                     暂无歌词 • 点击上传 .lrc 文件
                  </div>
               )}
-              <StatsPanel accentHex={accentHex} />
+              {showStats && <StatsPanel accentHex={accentHex} />}
             </div>
           )}
 
@@ -1046,6 +1047,8 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange }: UI
         accentHex={accentHex}
         maxHistoryItems={maxHistoryItems}
         onMaxHistoryChange={setMaxHistoryItems}
+        showStats={showStats}
+        onStatsVisibleChange={setShowStats}
       />
 
       {/* First-Time Tutorial */}

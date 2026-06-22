@@ -14,6 +14,8 @@ interface SettingsPanelProps {
   accentHex: string;
   maxHistoryItems: number;
   onMaxHistoryChange: (n: number) => void;
+  showStats: boolean;
+  onStatsVisibleChange: (v: boolean) => void;
 }
 
 const lyricsStyles: { value: LyricsStyleOption; label: string; desc: string }[] = [
@@ -34,6 +36,8 @@ export function SettingsPanel({
   accentHex,
   maxHistoryItems,
   onMaxHistoryChange,
+  showStats,
+  onStatsVisibleChange,
 }: SettingsPanelProps) {
   if (!isOpen) return null;
 
@@ -101,7 +105,34 @@ export function SettingsPanel({
             </div>
           </div>
 
-          {/* Section 2: 歌词设置 */}
+          {/* Section 2: 频段数值 */}
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
+                <path d="M4 18h16M6 14h12M8 10h8M10 6h4" />
+                <rect x="2" y="2" width="20" height="20" rx="2" ry="2" />
+              </svg>
+              <span className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+                频段数值
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-white/60">贝斯 · 中段 · 高音 · 能源</span>
+              <button
+                onClick={() => onStatsVisibleChange(!showStats)}
+                className="text-[10px] uppercase tracking-[0.15em] px-3 py-1.5 rounded-sm border transition-all duration-200"
+                style={{
+                  backgroundColor: showStats ? `${accentHex}20` : 'transparent',
+                  borderColor: showStats ? accentHex : 'rgba(255,255,255,0.1)',
+                  color: showStats ? accentHex : 'rgba(255,255,255,0.45)',
+                }}
+              >
+                {showStats ? '显示' : '隐藏'}
+              </button>
+            </div>
+          </div>
+
+          {/* Section 3: 歌词设置 */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
@@ -158,7 +189,7 @@ export function SettingsPanel({
             </div>
           </div>
 
-          {/* Section 3: 播放记录 */}
+          {/* Section 4: 播放记录 */}
           <div className="mb-2">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
