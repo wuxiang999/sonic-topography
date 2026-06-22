@@ -5,8 +5,6 @@ export type LyricsStyleOption = '滚动' | '居中' | '高亮';
 interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  barCount: number;
-  onBarCountChange: (count: number) => void;
   lyricsVisible: boolean;
   onLyricsVisibleChange: (v: boolean) => void;
   lyricsStyle: LyricsStyleOption;
@@ -33,8 +31,6 @@ const lyricsStyles: { value: LyricsStyleOption; label: string; desc: string }[] 
 export function SettingsPanel({
   isOpen,
   onClose,
-  barCount,
-  onBarCountChange,
   lyricsVisible,
   onLyricsVisibleChange,
   lyricsStyle,
@@ -85,39 +81,7 @@ export function SettingsPanel({
 
         {/* Content */}
         <div className="px-5 py-4">
-          {/* Section 1: 频谱显示 */}
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <line x1="9" y1="9" x2="9" y2="15" />
-                <line x1="15" y1="7" x2="15" y2="17" />
-              </svg>
-              <span className="text-[10px] uppercase tracking-[0.2em] text-white/50">
-                频谱显示
-              </span>
-            </div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] text-white/60">条形数量</span>
-              <span className="text-[11px] font-mono" style={{ color: accentHex }}>{barCount}</span>
-            </div>
-            <input
-              type="range"
-              min={16}
-              max={128}
-              step={8}
-              value={barCount}
-              onChange={(e) => onBarCountChange(parseInt(e.target.value))}
-              className="w-full h-1 accent-current cursor-pointer bg-white/20 appearance-none rounded-full"
-              style={{ accentColor: accentHex }}
-            />
-            <div className="flex justify-between mt-1">
-              <span className="text-[9px] text-white/20">16</span>
-              <span className="text-[9px] text-white/20">128</span>
-            </div>
-          </div>
-
-          {/* Section 2: 频段数值 */}
+          {/* Section 1: 频段数值 */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
@@ -144,7 +108,7 @@ export function SettingsPanel({
             </div>
           </div>
 
-          {/* Section 3: 画质 & 抗锯齿 */}
+          {/* Section 2: 画质 & 抗锯齿 */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
@@ -206,7 +170,7 @@ export function SettingsPanel({
             </div>
           </div>
 
-          {/* Section 4: 无 UI 模式 */}
+          {/* Section 3: 无 UI 模式 */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
@@ -238,7 +202,7 @@ export function SettingsPanel({
             </div>
           </div>
 
-          {/* Section 5: 歌词设置 */}
+          {/* Section 4: 歌词设置 */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">

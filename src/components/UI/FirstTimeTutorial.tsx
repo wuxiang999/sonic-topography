@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 interface FirstTimeTutorialProps {
   accentHex?: string;
+  isMobile?: boolean;
 }
 
 interface TipIcon {
@@ -9,7 +10,7 @@ interface TipIcon {
   path: string;
 }
 
-const TIPS: { icon: TipIcon; text: string }[] = [
+const DESKTOP_TIPS: { icon: TipIcon; text: string }[] = [
   {
     icon: { viewBox: '0 0 24 24', path: 'M3 3h18v18H3z M9 9h6v6H9z' },
     text: '鼠标悬停屏幕左侧边缘打开侧边栏',
@@ -20,21 +21,44 @@ const TIPS: { icon: TipIcon; text: string }[] = [
   },
   {
     icon: { viewBox: '0 0 24 24', path: 'M15 6v12M3 12h18M9 4v16' },
-    text: '按 H 键查看所有快捷键',
+    text: '按 U 键一键隐藏所有界面（含 Logo）',
   },
   {
     icon: { viewBox: '0 0 24 24', path: 'M12 3a1 1 0 00-1 1v1.09A6 6 0 006.09 11H5a1 1 0 000 2h1.09A6 6 0 0011 18.91V20a1 1 0 002 0v-1.09A6 6 0 0017.91 13H19a1 1 0 000-2h-1.09A6 6 0 0013 5.09V4a1 1 0 00-1-1zm0 4a4 4 0 110 8 4 4 0 010-8z' },
-    text: '点击播放卡片的调色板切换主题',
+    text: '侧边栏进入设置 → 画质 & 抗锯齿可调',
   },
   {
     icon: { viewBox: '0 0 24 24', path: 'M12 15V3m0 12l-4-4m4 4l4-4M2 17l.62 2.48A2 2 0 004 21h16a2 2 0 001.38-.52L22 17' },
-    text: '侧边栏最下方进入设置',
+    text: '侧边栏最下方进入设置面板',
+  },
+];
+
+const MOBILE_TIPS: { icon: TipIcon; text: string }[] = [
+  {
+    icon: { viewBox: '0 0 24 24', path: 'M3 3h18v18H3z M9 9h6v6H9z' },
+    text: '点击右下角圆形按钮打开功能菜单',
+  },
+  {
+    icon: { viewBox: '0 0 24 24', path: 'M12 3a1 1 0 00-1 1v1.09A6 6 0 006.09 11H5a1 1 0 000 2h1.09A6 6 0 0011 18.91V20a1 1 0 002 0v-1.09A6 6 0 0017.91 13H19a1 1 0 000-2h-1.09A6 6 0 0013 5.09V4a1 1 0 00-1-1zm0 4a4 4 0 110 8 4 4 0 010-8z' },
+    text: '菜单 → 设置 → 画质 & 抗锯齿可调',
+  },
+  {
+    icon: { viewBox: '0 0 24 24', path: 'M12 15V3m0 12l-4-4m4 4l4-4M2 17l.62 2.48A2 2 0 004 21h16a2 2 0 001.38-.52L22 17' },
+    text: '设置中可调频段数值显隐、无UI模式',
+  },
+  {
+    icon: { viewBox: '0 0 24 24', path: 'M15 6v12M3 12h18M9 4v16' },
+    text: '连接键盘可按 U 键隐藏所有界面',
+  },
+  {
+    icon: { viewBox: '0 0 24 24', path: 'M9 18V5l12-2v13' },
+    text: '菜单 → 示例加载演示音乐',
   },
 ];
 
 const STORAGE_KEY = 'sonic-tutorial-shown';
 
-export function FirstTimeTutorial({ accentHex = '#00ffff' }: FirstTimeTutorialProps) {
+export function FirstTimeTutorial({ accentHex = '#00ffff', isMobile = false }: FirstTimeTutorialProps) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -62,6 +86,8 @@ export function FirstTimeTutorial({ accentHex = '#00ffff' }: FirstTimeTutorialPr
 
   if (!visible) return null;
 
+  const TIPS = isMobile ? MOBILE_TIPS : DESKTOP_TIPS;
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70" />
@@ -77,7 +103,7 @@ export function FirstTimeTutorial({ accentHex = '#00ffff' }: FirstTimeTutorialPr
           style={{ borderBottom: `1px solid ${accentHex}` }}
         >
           <div className="text-[16px] font-light tracking-[0.08em] text-white/90">
-            欢迎
+            欢迎{isMobile ? '（移动端）' : ''}
           </div>
         </div>
 

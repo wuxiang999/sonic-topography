@@ -4,7 +4,6 @@ import { engine } from '../../lib/AudioEngine';
 import { themes } from '../../lib/themes';
 import { LyricsDisplay } from './LyricsDisplay';
 import { DesktopPlayerPanel } from './DesktopPlayerPanel';
-import { VisualizerOverlay } from './VisualizerOverlay';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
 import { PlayHistory, addToHistory } from './PlayHistory';
 import { SettingsPanel, type LyricsStyleOption } from './SettingsPanel';
@@ -131,7 +130,6 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [showPlayHistory, setShowPlayHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [barCount, setBarCount] = useState(64);
   const [maxHistoryItems, setMaxHistoryItems] = useState(50);
   const [showStats, setShowStats] = useState(true);
 
@@ -926,6 +924,13 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
                 >
                   <Palette size={14} /> 主题: {theme === 'auto' ? '随歌自适应' : themes[theme]?.name}
                 </button>
+                <div className="border-t border-white/5 my-1" />
+                <button
+                  onClick={() => { setMobileMenuOpen(false); setShowSettings(true); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-[11px] uppercase tracking-[0.15em] text-white/80 hover:bg-white/5 transition-colors"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> 设置
+                </button>
               </div>
             </div>
           )}
@@ -974,13 +979,7 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
             onChange={handleFileChange}
           />
 
-          {/* Desktop Visualizer Overlay (always visible) */}
-          <VisualizerOverlay
-            accentHex={accentHex}
-            isPlaying={isPlaying}
-            isCapturing={isCapturing}
-            barCount={barCount}
-          />
+          {/* Desktop Visualizer Overlay (removed) */}
         </>
       )}
 
@@ -1047,8 +1046,6 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
       <SettingsPanel
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
-        barCount={barCount}
-        onBarCountChange={setBarCount}
         lyricsVisible={lyricsVisible}
         onLyricsVisibleChange={setLyricsVisible}
         lyricsStyle={lyricsStyle}
@@ -1067,7 +1064,7 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
       />
 
       {/* First-Time Tutorial */}
-      <FirstTimeTutorial accentHex={accentHex} />
+      <FirstTimeTutorial accentHex={accentHex} isMobile={isMobile} />
 
       {/* Brand Mark (outside pointer-events-none wrapper) */}
       {watermarkVisible ? (
