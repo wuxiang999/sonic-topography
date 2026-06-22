@@ -80,6 +80,7 @@ async function neteasePost(urlPath, payload, extraCookies = {}) {
       'Referer': '',
       'Cookie': cookieStr,
       'Content-Type': 'application/x-www-form-urlencoded',
+      'X-Real-IP': '118.122.120.12',
     },
     body: new URLSearchParams({ params: encrypted }),
     signal: AbortSignal.timeout(10000),
@@ -101,6 +102,7 @@ async function neteaseSimplePost(url, data, extraCookies = {}) {
       'Referer': 'https://music.163.com/',
       'Cookie': cookieStr,
       'Content-Type': 'application/x-www-form-urlencoded',
+      'X-Real-IP': '118.122.120.12',
     },
     body: new URLSearchParams(data),
     signal: AbortSignal.timeout(10000),
@@ -120,6 +122,7 @@ async function neteaseSimpleGet(url, extraCookies = {}) {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36',
       'Referer': 'https://music.163.com/',
       'Cookie': cookieStr,
+      'X-Real-IP': '118.122.120.12',
     },
     signal: AbortSignal.timeout(10000),
   });
@@ -318,7 +321,7 @@ app.get('/api/netease/lyric', async (req, res) => {
   }
 });
 
-// Song URL
+// Song URL (uses plain web API — EAPI endpoint returns empty from non-CN IPs)
 app.get('/api/netease/url', async (req, res) => {
   try {
     const id = String(req.query.id || '');
@@ -333,12 +336,9 @@ app.get('/api/netease/url', async (req, res) => {
       return;
     }
 
-    const level = String(req.query.level || 'standard');
-    const payload = {
-      ids: [id], level, encodeType: 'flac',
-      header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
-    };
-    const result = await neteasePost('/eapi/song/enhance/player/url/v1', payload);
+    const br = String(req.query.br || '128000');
+    const apiUrl = `https://music.163.com/api/song/enhance/player/url?id=${id}&ids=[${id}]&br=${br}`;
+    const result = await neteaseSimpleGet(apiUrl);
     const url = result?.data?.[0]?.url || null;
 
     if (url) {
@@ -365,12 +365,9 @@ app.get('/api/netease/audio', async (req, res) => {
     let playableUrl = cached?.expiresAt > Date.now() ? cached.url : null;
 
     if (!playableUrl) {
-      const level = String(req.query.level || 'standard');
-      const payload = {
-        ids: [id], level, encodeType: 'flac',
-        header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
-      };
-      const result = await neteasePost('/eapi/song/enhance/player/url/v1', payload);
+      const br = String(req.query.br || '128000');
+      const apiUrl = `https://music.163.com/api/song/enhance/player/url?id=${id}&ids=[${id}]&br=${br}`;
+      const result = await neteaseSimpleGet(apiUrl);
       playableUrl = result?.data?.[0]?.url || null;
       if (playableUrl) {
         urlCache.set(id, { url: playableUrl, expiresAt: Date.now() + URL_CACHE_TTL });
@@ -417,6 +414,59 @@ app.get('/api/netease/audio', async (req, res) => {
     if (!res.headersSent) {
       res.status(500).json({ error: '音频流代理失败' });
     }
+  }
+});
+
+// Toplist (热歌榜)
+app.get('/api/netease/toplist', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 30, 50);
+    const payload = {
+      id: '3779629',
+      limit, offset: 0,
+      header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
+    };
+    const result = await neteasePost('/eapi/v3/playlist/detail', payload);
+    const tracks = result?.playlist?.tracks || [];
+    const songs = tracks.map((item) => ({
+      id: item.id,
+      name: item.name,
+      artist: (item.ar || []).map((a) => a.name).filter(Boolean).join(' / '),
+      album: item.al?.name || '',
+      duration: item.dt || 0,
+      picUrl: item.al?.picUrl ? neteasePicUrl(item.al.pic, 300) : '',
+    })).slice(0, limit);
+    res.json({ songs, name: result?.playlist?.name || '热歌榜' });
+  } catch (error) {
+    console.error('Toplist error:', error);
+    res.status(500).json({ error: '获取排行榜失败' });
+  }
+});
+
+// Playlist detail
+app.get('/api/netease/playlist', async (req, res) => {
+  try {
+    const id = String(req.query.id || '');
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    if (!id) { res.status(400).json({ error: '缺少歌单ID' }); return; }
+    const payload = {
+      id, n: limit, s: 8,
+      header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
+    };
+    const result = await neteasePost('/eapi/v3/playlist/detail', payload);
+    const tracks = result?.playlist?.tracks || [];
+    const songs = tracks.map((item) => ({
+      id: item.id,
+      name: item.name,
+      artist: (item.ar || []).map((a) => a.name).filter(Boolean).join(' / '),
+      album: item.al?.name || '',
+      duration: item.dt || 0,
+      picUrl: item.al?.picUrl ? neteasePicUrl(item.al.pic, 300) : '',
+    }));
+    res.json({ songs, name: result?.playlist?.name || '', coverImgUrl: result?.playlist?.coverImgUrl || '' });
+  } catch (error) {
+    console.error('Playlist detail error:', error);
+    res.status(500).json({ error: '获取歌单失败' });
   }
 });
 

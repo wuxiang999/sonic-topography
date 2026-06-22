@@ -27,6 +27,7 @@ function computeBestTheme(data: ReturnType<typeof engine.getAudioData>): string 
     'neon-tokyo':         [0.20, 0.80, 0.75, 0.70, 0.70], // cool, bright, energetic
     'cyber-forest':       [0.50, 0.50, 0.50, 0.50, 0.50], // balanced, organic
     'minimal-monochrome': [0.20, 0.30, 0.15, 0.20, 0.35], // cool, sparse, minimal
+    'dj-club':            [0.15, 0.90, 0.90, 0.85, 0.80], // cool-bright, max energy, dense, bright centroid
   };
 
   const weights = [0.30, 0.25, 0.20, 0.15, 0.10]; // feature importance
@@ -73,13 +74,17 @@ export function MapScene({
   theme = 'auto',
   isMobile = false,
   perfLevel = 'medium',
+  isDJMode = false,
 }: {
   theme?: string;
   isMobile?: boolean;
   perfLevel?: PerfLevel;
+  isDJMode?: boolean;
 }) {
   const controlsRef = useRef<OrbitControls>(null!);
-  const { clock } = useThree();
+  // Timer replaces deprecated THREE.Clock
+  const timer = useMemo(() => new THREE.Timer(), []);
+  const timeRef = useRef(0);
 
   const gridSize = getPerfValue(perfLevel, [50, 80, 100]);
   const spacing = isMobile ? 1.1 : 1.05;
@@ -165,7 +170,7 @@ export function MapScene({
     const idx = rippleIndex.current;
     const slot = ripplesRef.current[idx];
     slot.pos.set(x, y);
-    slot.time = clock.elapsedTime;
+    slot.time = timeRef.current;
     slot.strength = strength;
     slot.isActive = 1;
     slot.rippleType = isWhite ? 1 : 0;
@@ -226,7 +231,7 @@ export function MapScene({
   const lastMeteorSpawnTime = useRef(-Infinity);
 
   const addMeteor = (strength: number) => {
-    const now = clock.elapsedTime;
+    const now = timeRef.current;
     const cooldownSeconds = engine.meteorTrigger.cooldown / 60;
     if (now - lastMeteorSpawnTime.current < cooldownSeconds) return;
     lastMeteorSpawnTime.current = now;
@@ -286,6 +291,12 @@ export function MapScene({
 
     // ── Dynamic scene parameters ────────────────────────────────
     const params = getSceneParams(data);
+    // DJ mode: override with club-optimized values
+    if (isDJMode) {
+      params.autoRotateSpeed = Math.max(params.autoRotateSpeed, 0.35);
+      params.meteorCooldown = Math.min(params.meteorCooldown, 150);
+      params.glowBoost = Math.max(params.glowBoost, 1.3);
+    }
 
     // Update engine meteor trigger cooldown (dynamic)
     engine.meteorTrigger.cooldown = params.meteorCooldown;
@@ -314,9 +325,9 @@ export function MapScene({
     if (fogRef.current && !isMobile) {
       fogRef.current.color.lerp(t.uBaseColor1, lerpSpeed);
     }
-
-    // ── Shader uniforms ────────────────────────────────────────
-    mat.uTime = state.clock.elapsedTime;
+    timer.update();
+    mat.uTime = timer.getElapsed();
+    timeRef.current = timer.getElapsed();
     mat.uBass = data.bass;
     mat.uMid = data.mid;
     mat.uTreble = data.treble;

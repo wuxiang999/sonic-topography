@@ -1,10 +1,16 @@
+// Suppress THREE.Clock deprecation warning (R3F uses it internally, not our code)
+const _warn = console.warn;
+console.warn = (...args) => {
+  if (args[0] && typeof args[0] === 'string' && args[0].includes('Clock: This module has been deprecated')) return;
+  _warn.apply(console, args);
+};
+
 import { Canvas } from '@react-three/fiber';
 import { UI } from './components/UI/UI';
 import { MapScene } from './components/AudioVisualizer/MapScene';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { themes } from './lib/themes';
 import { engine } from './lib/AudioEngine';
-import { parseLRC } from './lib/lyrics';
 import { getDevicePerformance } from './lib/performance';
 
 function useIsMobile() {
@@ -36,6 +42,7 @@ function useRenderMode() {
 export default function App() {
   const [theme, setTheme] = useState('auto');
   const [currentCover, setCurrentCover] = useState('');
+  const [renderRecHidden, setRenderRecHidden] = useState(false);
 
   // ── Session restore ─────────────────────────────────────────
   useEffect(() => {
@@ -57,6 +64,31 @@ export default function App() {
 
   const isMobile = useIsMobile();
   const { renderMode, songId } = useRenderMode();
+  // ── DJ mode auto-detection ──────────────────────────────
+  const [isDJMode, setIsDJMode] = useState(false);
+  const djDetectionRef = useRef<number[]>([]);
+  useEffect(() => {
+    if (renderMode) return;
+    const interval = setInterval(() => {
+      const data = engine.getAudioData();
+      const energy = data.energy || 0;
+      const density = data.density || 0;
+      const sharpness = data.sharpness || 0;
+      const now = performance.now();
+
+      djDetectionRef.current.push(energy);
+      if (djDetectionRef.current.length > 60) djDetectionRef.current.shift();
+
+      if (djDetectionRef.current.length >= 30) {
+        const avg = djDetectionRef.current.reduce((a, b) => a + b, 0) / djDetectionRef.current.length;
+        const variance = djDetectionRef.current.reduce((s, v) => s + (v - avg) ** 2, 0) / djDetectionRef.current.length;
+        const rhythmic = variance < 0.008 && avg > 0.35; // steady high energy = DJ/electronic
+        const intense = energy > 0.55 && density > 0.55 && sharpness > 0.4;
+        setIsDJMode(rhythmic || intense);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, [renderMode]);
   // Read render duration from URL or default to 30s
   const renderDuration = useRef(
     typeof window !== 'undefined'
@@ -64,251 +96,7 @@ export default function App() {
       : 30
   );
 
-  // ===== Local Recording State =====
-  const [isRecording, setIsRecording] = useState(false);
-  const recordingLyricsRef = useRef<string>('');
-  const recordingLrcLinesRef = useRef<{ time: number; text: string }[]>([]);
-  const compositeCanvasRef = useRef<HTMLCanvasElement>(null);
-  const localRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordingChunksRef = useRef<Blob[]>([]);
-  const recordingRafRef = useRef<number>(0);
-  const recordingStartTimeRef = useRef(0);
-
-  const startLocalRecording = useCallback((lyricsLrc: string) => {
-    const threeCanvas = document.querySelector('canvas');
-    if (!threeCanvas) { console.error('No canvas found'); return; }
-    
-    // Parse lyrics for styled rendering
-    recordingLyricsRef.current = lyricsLrc;
-    recordingLrcLinesRef.current = parseLRC(lyricsLrc);
-    
-    setIsRecording(true);
-    recordingChunksRef.current = [];
-
-    // Create composite canvas in next tick after state update
-    requestAnimationFrame(() => {
-      const composite = compositeCanvasRef.current;
-      if (!composite) return;
-      
-      // Record at viewport size (scaled down for performance)
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const targetW = Math.min(vw, 1280);
-      const targetH = Math.min(vh, 720);
-      composite.width = targetW;
-      composite.height = targetH;
-      const ctx = composite.getContext('2d');
-      if (!ctx) return;
-      
-      // Scale from viewport to composite coordinates
-      const sx = targetW / vw;
-      const sy = targetH / vh;
-
-      // Set up MediaRecorder on composite canvas
-      const stream = composite.captureStream(20);
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9' : 'video/webm';
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 1500000 });
-      localRecorderRef.current = rec;
-      
-      rec.ondataavailable = (e) => {
-        if (e.data.size > 0) recordingChunksRef.current.push(e.data);
-      };
-      
-      const finishRecording = () => {
-        cancelAnimationFrame(recordingRafRef.current);
-        setIsRecording(false);
-        
-        if (recordingChunksRef.current.length === 0) return;
-        const blob = new Blob(recordingChunksRef.current, { type: 'video/webm' });
-        
-        const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `视觉渲染-${timestamp}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      };
-
-      rec.onstop = finishRecording;
-      rec.start(2000);
-      recordingStartTimeRef.current = Date.now();
-
-      // Auto-stop when song ends
-      const onAudioEnded = () => {
-        if (localRecorderRef.current?.state === 'recording') {
-          setTimeout(() => localRecorderRef.current?.stop(), 1500);
-        }
-      };
-      if (engine.audioElement) {
-        engine.audioElement.addEventListener('ended', onAudioEnded, { once: true });
-      }
-
-      // Get accent color from CSS variable
-      const getAccent = (): string => {
-        const v = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-        return v || '#00ffff';
-      };
-
-      // State for smooth lyrics scroll
-      let currentScrollY = 0;
-
-      // Pre-computed constants
-      const lyricLeft = targetW * 0.06;
-      const lyricWidth = targetW * 0.55;
-      const lyricAreaTop = targetH * 0.2;
-      const lyricAreaHeight = targetH * 0.55;
-
-      const drawFrame = () => {
-        if (!ctx || !composite) return;
-        
-        // 1. Draw Three.js canvas (3D visualization)
-        ctx.drawImage(threeCanvas, 0, 0, composite.width, composite.height);
-        
-        // 2. Render styled lyrics (matching LyricsDisplay CSS)
-        const lines = recordingLrcLinesRef.current;
-        const currentTime = engine.audioElement?.currentTime ?? 0;
-        
-        if (lines.length > 0) {
-          // Find active line index (with lookahead tolerance)
-          let activeIndex = -1;
-          for (let i = 0; i < lines.length; i++) {
-            if (currentTime >= lines[i].time - 0.15) activeIndex = i;
-            else break;
-          }
-          
-          // Line height and font sizes
-          const totalVisible = Math.min(lines.length, 14);
-          const lineHeight = lyricAreaHeight / Math.max(totalVisible, 8);
-          const activeFontSize = Math.floor(lineHeight * 0.55);
-          const inactiveFontSize = Math.floor(lineHeight * 0.38);
-          
-          // Target: center active line in the lyrics area
-          const centerY = lyricAreaTop + lyricAreaHeight / 2;
-          let targetY = centerY - (activeIndex + 0.5) * lineHeight;
-          if (activeIndex < 0) targetY = centerY;
-          
-          // Smooth lerp (0.12 at 20fps ≈ 500ms convergence)
-          currentScrollY += (targetY - currentScrollY) * 0.12;
-          
-          // Cache accent color
-          const accentColor = getAccent();
-          const textX = lyricLeft + 24;
-
-          // Pre-draw vertical timeline (once)
-          ctx.strokeStyle = `rgba(255,255,255,0.06)`;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(lyricLeft + 6, lyricAreaTop);
-          ctx.lineTo(lyricLeft + 6, lyricAreaTop + lyricAreaHeight);
-          ctx.stroke();
-
-          // Draw each visible line
-          const startLine = Math.max(0, activeIndex - 7);
-          const endLine = Math.min(lines.length, startLine + 16);
-          
-          for (let i = startLine; i < endLine; i++) {
-            const line = lines[i];
-            if (!line?.text) continue;
-            const isActive = i === activeIndex;
-            
-            // Y position with smooth scroll
-            const yOffset = currentScrollY + i * lineHeight;
-            const dotMidY = yOffset + lineHeight / 2;
-            
-            // Skip if far outside visible area
-            if (yOffset < lyricAreaTop - lineHeight || yOffset > lyricAreaTop + lyricAreaHeight + lineHeight) continue;
-            
-            // Edge fade opacity
-            const distFromCenter = Math.abs(dotMidY - centerY);
-            const maxDist = lyricAreaHeight / 2;
-            const fade = Math.max(0, 1 - (distFromCenter / maxDist) * 1.1);
-            const finalAlpha = Math.pow(fade, 0.7);
-            
-            // 2a. Dot indicator
-            if (isActive) {
-              // Active line: colored glow circle
-              ctx.beginPath();
-              ctx.arc(lyricLeft + 6, dotMidY, 6 * finalAlpha, 0, Math.PI * 2);
-              ctx.fillStyle = accentColor;
-              ctx.shadowColor = `${accentColor}88`;
-              ctx.shadowBlur = 12 * finalAlpha;
-              ctx.fill();
-              ctx.beginPath();
-              ctx.arc(lyricLeft + 6, dotMidY, 2.5, 0, Math.PI * 2);
-              ctx.fillStyle = '#000';
-              ctx.shadowBlur = 0;
-              ctx.fill();
-            } else {
-              // Past/future dot
-              const dotR = i < activeIndex ? 3 : 2;
-              ctx.beginPath();
-              ctx.arc(lyricLeft + 6, dotMidY, dotR * finalAlpha, 0, Math.PI * 2);
-              ctx.fillStyle = i < activeIndex
-                ? `rgba(0,255,255,${0.5 * finalAlpha})`
-                : `rgba(255,255,255,${0.15 * finalAlpha})`;
-              ctx.fill();
-            }
-            
-            // 2b. Text line
-            ctx.shadowBlur = 0;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            
-            if (isActive) {
-              ctx.font = `bold ${activeFontSize}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`;
-              ctx.fillStyle = `rgba(255,255,255,${finalAlpha})`;
-              ctx.shadowColor = 'rgba(0,0,0,0.6)';
-              ctx.shadowBlur = 8;
-              ctx.fillText(line.text, textX, dotMidY + 1);
-              ctx.shadowBlur = 0;
-            } else if (i < activeIndex) {
-              ctx.font = `${inactiveFontSize}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`;
-              ctx.fillStyle = `rgba(255,255,255,${0.2 * finalAlpha})`;
-              ctx.fillText(line.text, textX, dotMidY);
-            } else {
-              ctx.font = `${inactiveFontSize}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`;
-              ctx.fillStyle = `rgba(255,255,255,${0.35 * finalAlpha})`;
-              ctx.fillText(line.text, textX, dotMidY);
-            }
-          }
-        }
-        
-        // 3. REC indicator (top right)
-        ctx.shadowBlur = 0;
-        ctx.font = 'bold 14px monospace';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
-        ctx.fillStyle = '#ff3333';
-        ctx.fillText('● REC', composite.width - 12, 12);
-        
-        // Elapsed time
-        const elapsed = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
-        const mins = Math.floor(elapsed / 60);
-        const secs = elapsed % 60;
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.font = '11px monospace';
-        ctx.fillText(`${mins}:${secs.toString().padStart(2, '0')}`, composite.width - 12, 30);
-        
-        recordingRafRef.current = requestAnimationFrame(drawFrame);
-      };
-      
-      recordingRafRef.current = requestAnimationFrame(drawFrame);
-    });
-  }, []);
-
-  const stopLocalRecording = useCallback(() => {
-    if (localRecorderRef.current?.state === 'recording') {
-      localRecorderRef.current.stop();
-    }
-    cancelAnimationFrame(recordingRafRef.current);
-    setIsRecording(false);
-  }, []);
-
-  // Expose render mode to window for puppeteer
+  // ===== Render Mode (recording removed from local UI) =====
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).__renderMode = renderMode;
@@ -565,9 +353,6 @@ export default function App() {
           theme={theme}
           onThemeChange={setTheme}
           isMobile={isMobile}
-          isRecording={isRecording}
-          onStartRecording={startLocalRecording}
-          onStopRecording={stopLocalRecording}
           onCoverChange={setCurrentCover}
         />
       )}
@@ -578,11 +363,12 @@ export default function App() {
           performance={canvasPerf}
           gl={canvasGl}
         >
-          <MapScene theme={theme} isMobile={isMobile} perfLevel={perf.perfLevel} coverUrl={currentCover} />
+          <MapScene theme={theme} isMobile={isMobile} perfLevel={perf.perfLevel} coverUrl={currentCover} isDJMode={isDJMode} />
         </Canvas>
       </div>
-      {renderMode && (
+      {renderMode && !renderRecHidden && (
         <div
+          onClick={() => setRenderRecHidden(true)}
           style={{
             position: 'fixed',
             bottom: 20,
@@ -590,7 +376,8 @@ export default function App() {
             color: 'rgba(255,50,50,0.6)',
             fontSize: 13,
             fontFamily: 'monospace',
-            pointerEvents: 'none',
+            pointerEvents: 'auto',
+            cursor: 'pointer',
             zIndex: 9999,
           }}
         >
@@ -598,14 +385,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Local Recording overlay composite canvas */}
-      {isRecording && (
-        <canvas
-          ref={compositeCanvasRef}
-          className="fixed inset-0 z-[60] pointer-events-none"
-          style={{ width: '100vw', height: '100vh' }}
-        />
-      )}
     </div>
   );
 }

@@ -1,6 +1,5 @@
 node_modules/
 build/
-dist/
 coverage/
 data/
 docs/
@@ -12,3 +11,5 @@ docs/
 *.patch
 *.local
 api/cookie.txt
+debug_*.mjs
+test_url*.mjs

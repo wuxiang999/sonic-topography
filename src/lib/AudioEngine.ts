@@ -65,9 +65,9 @@ export class AudioEngine {
   public isPlaying: boolean = false;
   public isCapturing: boolean = false;
   private pauseTimeout: ReturnType<typeof setTimeout> | null = null;
-  private fadeTime = 0.5; // seconds
+  private fadeTime = 1.2; // seconds (for smooth crossfade)
   private visualReleaseUntil = 0;
-  private visualReleaseTime = 1.6; // seconds
+  private visualReleaseTime = 2.0; // seconds
   
   private beatThreshold = 0.4;
   private beatDecay = 0.95;
@@ -183,10 +183,42 @@ export class AudioEngine {
   }
 
   public loadUrl(url: string) {
-    this.beginVisualRelease();
     this.stopCapture();
     this.audioElement.src = url;
     this.audioElement.load();
+  }
+
+  /**
+   * Smooth crossfade: fade out current → load new source → fade in
+   */
+  public crossfadeTo(url: string): Promise<void> {
+    return new Promise((resolve) => {
+      // 1. Fade out current audio
+      if (this.fadeNode && this.audioCtx) {
+        this.fadeNode.gain.cancelScheduledValues(this.audioCtx.currentTime);
+        this.fadeNode.gain.setValueAtTime(this.fadeNode.gain.value, this.audioCtx.currentTime);
+        this.fadeNode.gain.linearRampToValueAtTime(0.001, this.audioCtx.currentTime + this.fadeTime * 0.6);
+      }
+      this.beginVisualRelease();
+
+      // 2. Wait for fade out, then switch source
+      setTimeout(() => {
+        this.stopCapture();
+        this.audioElement.src = url;
+        this.audioElement.load();
+
+        // 3. Small delay for new source to start loading, then fade in
+        setTimeout(() => {
+          if (this.fadeNode && this.audioCtx) {
+            this.fadeNode.gain.cancelScheduledValues(this.audioCtx.currentTime);
+            this.fadeNode.gain.setValueAtTime(0.001, this.audioCtx.currentTime);
+            this.fadeNode.gain.linearRampToValueAtTime(1.0, this.audioCtx.currentTime + this.fadeTime * 0.8);
+          }
+          this.audioElement.play().catch(e => console.warn('crossfade play error:', e));
+          resolve();
+        }, 200);
+      }, this.fadeTime * 600);
+    });
   }
 
   public play() {

@@ -3,18 +3,19 @@ import { Play, Pause, Volume2, SkipForward, SkipBack, Palette, Plus, ListMusic, 
 import { engine } from '../../lib/AudioEngine';
 import { themes } from '../../lib/themes';
 import { LyricsDisplay } from './LyricsDisplay';
+import { DesktopPlayerPanel } from './DesktopPlayerPanel';
+import { VisualizerOverlay } from './VisualizerOverlay';
+import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
+import { PlayHistory, addToHistory } from './PlayHistory';
+import { SettingsPanel, type LyricsStyleOption } from './SettingsPanel';
+import { FirstTimeTutorial } from './FirstTimeTutorial';
 import { extractAudioMetadata, extractLyricsFromAudio } from '../../lib/metadata';
 
-interface UIProps {
-  theme: string;
-  onThemeChange: (theme: string) => void;
-  isMobile?: boolean;
-  isRecording?: boolean;
-  onStartRecording?: (lyricsText: string) => void;
-  onStopRecording?: () => void;
-  onCoverChange?: (url: string) => void;
-}
+// Placeholder for broken Netease cover images
+const PLACEHOLDER_COVER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>');
+const imgOnError = (e: React.SyntheticEvent<HTMLImageElement>) => { (e.target as HTMLImageElement).src = PLACEHOLDER_COVER; };
 
+// ── Types ──
 interface NeteaseSong {
   id: number;
   name: string;
@@ -24,18 +25,17 @@ interface NeteaseSong {
   fee: number;
   picUrl?: string;
 }
-
 interface SavedPlaylist {
   id: string;
   name: string;
   songs: NeteaseSong[];
 }
-
-type PlayMode = 'sequence' | 'shuffle';
+type PlayMode = 'sequence' | 'shuffle' | 'repeat-one';
 type PendingDelete =
   | { type: 'song'; playlistId: string; songId: number; label: string }
   | { type: 'playlist'; playlistId: string; label: string };
 
+// ── Playlist storage ──
 const PLAYLIST_STORAGE_KEY = 'sonic-topography-playlists-v1';
 
 function createDefaultPlaylists(): SavedPlaylist[] {
@@ -66,13 +66,34 @@ function hasSavedSongs(playlists: SavedPlaylist[]): boolean {
   return playlists.some((playlist) => playlist.songs.length > 0);
 }
 
-export function UI({ theme, onThemeChange, isMobile = false, isRecording = false, onStartRecording, onStopRecording, onCoverChange }: UIProps) {
+// ── UI Props & Component ──
+interface UIProps {
+  theme: string;
+  onThemeChange: (t: string) => void;
+  isMobile?: boolean;
+  onCoverChange?: (url: string) => void;
+}
+
+export function UI({ theme, onThemeChange, isMobile = false, onCoverChange }: UIProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const demoAudioUrl = '/music/demo.mp3';
   const demoLyricsUrl = '/music/demo.lrc';
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const sidebarLeaveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const handleSidebarEnter = () => {
+    if (sidebarLeaveTimer.current) clearTimeout(sidebarLeaveTimer.current);
+    setSidebarHovered(true);
+  };
+  const handleSidebarLeave = () => {
+    sidebarLeaveTimer.current = setTimeout(() => setSidebarHovered(false), 350);
+  };
   const [isPlaying, setIsPlaying] = useState(false);
   const [trackName, setTrackName] = useState<string>('未选择曲目');
+  const [watermarkVisible, setWatermarkVisible] = useState(true);
+  const [artistName, setArtistName] = useState<string>('');
   const [lyricsText, setLyricsText] = useState<string>('');
+  const [lyricsVisible, setLyricsVisible] = useState(true);
+  const [lyricsStyle, setLyricsStyle] = useState<'滚动' | '居中' | '高亮'>('滚动');
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
@@ -86,7 +107,6 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
   const [searchStatus, setSearchStatus] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showPlaylistPanel, setShowPlaylistPanel] = useState(false);
-  const [showQueuePanel, setShowQueuePanel] = useState(false);
   const [playlists, setPlaylists] = useState<SavedPlaylist[]>(readSavedPlaylists);
   const [activePlaylistId, setActivePlaylistId] = useState('favorites');
   const [songToAdd, setSongToAdd] = useState<NeteaseSong | null>(null);
@@ -100,6 +120,13 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
 
   // Mobile-specific state
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Shortcuts help & Play History
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [showPlayHistory, setShowPlayHistory] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [barCount, setBarCount] = useState(64);
+  const [maxHistoryItems, setMaxHistoryItems] = useState(50);
 
   useEffect(() => {
     if (!hasLoadedPlaylistsRef.current) return;
@@ -237,6 +264,7 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
     } catch (error) {
       console.warn('Unable to load demo track:', error);
       setTrackName('未选择曲目');
+      setArtistName('');
       setLyricsText('');
     }
   };
@@ -274,7 +302,8 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
     setCurrentSongId(song.id);
     setCurrentCover(song.picUrl || '');
     if (onCoverChange) onCoverChange(song.picUrl || '');
-    setTrackName(`${song.artist ? `${song.artist} - ` : ''}${song.name}`);
+    setTrackName(song.name);
+    setArtistName(song.artist || '');
     setLyricsText('');
     setSearchStatus('正在加载歌曲...');
 
@@ -296,10 +325,11 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
       }
 
       engine.init();
-      engine.loadUrl(`/music/api/netease/audio?id=${song.id}`);
-      engine.play();
+      // Use crossfade for smooth transition
+      engine.crossfadeTo(`/music/api/netease/audio?id=${song.id}`);
       setSearchStatus('');
       setShowSearchPanel(false);
+      addToHistory({ id: song.id, name: song.name, artist: song.artist, album: song.album, picUrl: song.picUrl });
     } catch (error) {
       console.warn('Unable to load Netease song:', error);
       setSearchStatus('加载失败，跳过...');
@@ -320,6 +350,8 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
       do {
         nextIndex = Math.floor(Math.random() * queue.length);
       } while (nextIndex === currentIndex);
+    } else if (playMode === 'repeat-one') {
+      nextIndex = currentIndex >= 0 ? currentIndex : 0;
     } else {
       const baseIndex = currentIndex >= 0 ? currentIndex : 0;
       nextIndex = (baseIndex + direction + queue.length) % queue.length;
@@ -331,7 +363,11 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
   useEffect(() => {
     const handleEnded = () => {
       const queue = getCurrentQueue();
-      if (queue.length > 1) playFromQueue(1);
+      if (playMode === 'repeat-one' && currentSongId) {
+        loadNeteaseSong(queue.find(s => s.id === currentSongId) || queue[0], queue);
+      } else if (queue.length > 1) {
+        playFromQueue(1);
+      }
     };
 
     engine.audioElement.addEventListener('ended', handleEnded);
@@ -439,6 +475,10 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
         engine.init();
         engine.togglePlay();
       }
+      if (e.key === 'h' || e.key === 'H' || e.key === '?') {
+        e.preventDefault();
+        setShowShortcutsHelp((v) => !v);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -480,19 +520,43 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
     };
   }, []);
 
-  // Audio-reactive - updates indicator DOM directly (no re-render)
+  const t = themes[theme] || themes['nocturnal'];
+  const accentHex = `#${t.uRippleColor.getHexString()}`;
+
+  // Audio-reactive - updates indicator DOM directly with scene accent colors
   useEffect(() => {
     let rafId: number;
     const el = indicatorRef.current;
+    // Parse hex to HSL so we can use the scene's exact hue
+    let baseH = 200, baseS = 70;
+    try {
+      const hex = accentHex.replace('#', '');
+      const r = parseInt(hex.substring(0,2), 16) / 255;
+      const g = parseInt(hex.substring(2,4), 16) / 255;
+      const b = parseInt(hex.substring(4,6), 16) / 255;
+      const max = Math.max(r,g,b), min = Math.min(r,g,b);
+      const l = (max + min) / 2;
+      if (max !== min) {
+        const d = max - min;
+        baseS = l > 0.5 ? (d / (2 - max - min)) * 100 : (d / (max + min)) * 100;
+        switch (max) {
+          case r: baseH = ((g - b) / d + (g < b ? 6 : 0)) * 60; break;
+          case g: baseH = ((b - r) / d + 2) * 60; break;
+          case b: baseH = ((r - g) / d + 4) * 60; break;
+        }
+      }
+    } catch {}
     const update = () => {
       const data = engine.getAudioData();
       const energy = data.energy || 0;
-      const hue = 200 + (data.bass || 0) * 80;
+      const bass = data.bass || 0;
       if (el) {
-        const bright = 35 + energy * 45;
+        const bright = 30 + energy * 50;
+        const sat = baseS * (0.6 + bass * 0.4);
         if (energy > 0.02) {
-          el.style.background = 'linear-gradient(180deg, transparent, hsl(' + hue + ',70%,' + bright + '%) 25%, hsl(' + (hue + 40) + ',75%,' + (bright + 10) + '%) 75%, transparent)';
-          el.style.boxShadow = '0 0 8px hsla(' + hue + ',70%,60%,' + (0.08 + energy * 0.28) + ')';
+          const hueShift = (bass - 0.5) * 20; // slight hue shift with bass
+          el.style.background = 'linear-gradient(180deg, transparent, hsl(' + (baseH + hueShift) + ',' + sat + '%,' + bright + '%) 25%, hsl(' + (baseH + hueShift + 30) + ',' + sat + '%,' + (bright + 8) + '%) 75%, transparent)';
+          el.style.boxShadow = '0 0 12px hsla(' + baseH + ',' + sat + '%,60%,' + (0.08 + energy * 0.35) + ')';
         } else {
           el.style.background = 'linear-gradient(180deg, transparent, rgba(255,255,255,0.08) 25%, rgba(255,255,255,0.15) 75%, transparent)';
           el.style.boxShadow = 'none';
@@ -502,10 +566,7 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
     };
     rafId = requestAnimationFrame(update);
     return () => cancelAnimationFrame(rafId);
-  }, []);
-
-  const t = themes[theme] || themes['nocturnal'];
-  const accentHex = `#${t.uRippleColor.getHexString()}`;
+  }, [accentHex]);
   const [currentCover, setCurrentCover] = useState('');
   const hasTrack = trackName !== '未选择曲目';
 
@@ -526,74 +587,62 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
       {/* ==================== DESKTOP LAYOUT ==================== */}
       {!isMobile && (
         <>
-          {/* Audio-reactive menu indicator - DOM-driven, no re-render */}
-          <div ref={indicatorRef}
-            className="absolute left-0 top-0 h-full w-[3px] z-[61] pointer-events-none rounded-r-full"
-            style={{ background: 'linear-gradient(180deg, transparent, rgba(255,255,255,0.08) 25%, rgba(255,255,255,0.15) 75%, transparent)' }} />
+          {/* Sidebar Left - hover to show categorized buttons */}
+          <div className="absolute left-0 top-0 h-full z-[60]">
+            {/* Trigger strip */}
+            <div className="absolute left-0 top-0 h-full w-[7px] z-[62] cursor-pointer pointer-events-auto" onMouseEnter={handleSidebarEnter} />
+            {/* Sidebar bar */}
+            <div className="h-full flex flex-col pointer-events-auto overflow-hidden border-r border-white/5 transition-all duration-300 ease-in-out"
+              style={{ width: sidebarHovered ? 44 : 0, background: 'rgba(2,4,10,0.85)', borderRightWidth: sidebarHovered ? 1 : 0 }}
+              onMouseEnter={handleSidebarEnter}
+              onMouseLeave={handleSidebarLeave}
+            >
+              <div className="flex flex-col items-center py-3 gap-5 min-w-[44px] h-full">
+                {/* === 功能 === */}
+                <button onClick={() => setShowSearchPanel(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="搜索">搜索</button>
+                <button onClick={() => setShowPlaylistPanel(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="播放列表">播放列表</button>
+                <button onClick={() => setShowPlayHistory(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="播放历史">播放历史</button>
+                <button onClick={() => setShowFreqPanel(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="频率触发">频率触发</button>
 
-          {/* Sidebar Left */}
-          <div className="absolute left-0 top-0 h-full w-[40px] z-[60] group hover:w-[80px] transition-all pointer-events-auto">
-            <aside className="absolute left-0 top-0 w-[60px] h-full border-r border-white/5 flex flex-col items-center py-6 pointer-events-auto -translate-x-full group-hover:translate-x-0 transition-transform duration-300" style={{ background: 'rgba(2,4,10,0.8)' }}>
-              <button className="uppercase tracking-[0.2em] text-[10px] mb-12 opacity-100 transition-opacity cursor-pointer" style={{ writingMode: 'vertical-rl', color: accentHex }}>可视化</button>
-              <button onClick={() => setShowFreqPanel(true)} className="uppercase tracking-[0.2em] text-[10px] mb-12 opacity-40 hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center gap-2" style={{ writingMode: 'vertical-rl' }}>
-                Trigger
-              </button>
-              <button onClick={() => setShowSearchPanel(true)} className="uppercase tracking-[0.2em] text-[10px] mb-12 opacity-40 hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center gap-2" style={{ writingMode: 'vertical-rl' }}>
-                Search
-              </button>
-              <button onClick={() => setShowPlaylistPanel(true)} className="uppercase tracking-[0.2em] text-[10px] mb-12 opacity-40 hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center gap-2" style={{ writingMode: 'vertical-rl' }}>
-                Playlist
-              </button>
-              <button onClick={() => setShowQueuePanel(true)} className="uppercase tracking-[0.2em] text-[10px] mb-12 opacity-40 hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center gap-2" style={{ writingMode: 'vertical-rl' }}>
-                Queue
-              </button>
+                <div className="border-t border-white/5 w-6" />
 
-              <div className="mt-auto flex flex-col items-center gap-10">
-                <button
-                  onClick={loadDemo}
-                  className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer font-bold"
-                  style={{ writingMode: 'vertical-rl' }}
-                >
-                  Demo
-                </button>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer"
-                  style={{ writingMode: 'vertical-rl' }}
-                >
-                  Upload
-                </button>
+                {/* === 工具 === */}
+                <button onClick={loadDemo} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer font-bold whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="示例">示例</button>
+                <button onClick={() => fileInputRef.current?.click()} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="上传">上传</button>
                 <button
                   onClick={() => {
                     if (engine.isCapturing) {
                       engine.stopCapture();
                       setTrackName('未选择曲目');
+                      setArtistName('');
                     } else {
                       engine.startCapture().then(() => {
-                          if (engine.isCapturing) setTrackName('系统音频录制');
+                        if (engine.isCapturing) setTrackName('系统音频录制');
                       });
                     }
                   }}
-                  className={`uppercase tracking-[0.2em] text-[10px] transition-opacity cursor-pointer ${isCapturing ? 'opacity-100 text-[#ef4444]' : 'opacity-40 hover:opacity-100'}`}
+                  className={`uppercase tracking-[0.2em] text-[10px] transition-opacity cursor-pointer whitespace-nowrap ${isCapturing ? 'opacity-100 text-[#ef4444]' : 'opacity-40 hover:opacity-100'}`}
                   style={{ writingMode: 'vertical-rl' }}
+                  title={isCapturing ? '停止捕获系统音频' : '捕获系统音频'}
                 >
-                  {isCapturing ? 'Stop' : 'Capture'}
+                  {isCapturing ? '停止捕获' : '系统音频'}
+                </button>
+
+                <div className="flex-1" />
+
+                {/* === 设置 === */}
+                <div className="border-t border-white/5 w-6" />
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="uppercase tracking-[0.2em] text-[10px] opacity-50 hover:opacity-100 transition-all cursor-pointer whitespace-nowrap"
+                  style={{ writingMode: 'vertical-rl', color: showSettings ? accentHex : 'rgba(255,255,255,0.5)' }}
+                  title="设置"
+                >
+                  设置
                 </button>
               </div>
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept="audio/*,.lrc"
-                multiple
-                className="hidden"
-                onChange={handleFileChange}
-              />
-            </aside>
-          </div>
-
-          {/* Brand Mark */}
-          <div className="absolute top-[40px] left-[100px] font-black text-[24px] tracking-[-1px] text-white z-50 select-none">
-            AJIN.
+              <input type="file" ref={fileInputRef} accept="audio/*,.lrc" multiple className="hidden" onChange={handleFileChange} />
+            </div>
           </div>
 
           {/* Desktop Search Panel */}
@@ -649,22 +698,11 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
             </div>
           )}
 
-          {showQueuePanel && (
-            <div className="absolute top-[40px] left-[100px] w-[360px] max-h-[70vh] z-[55] pointer-events-auto backdrop-blur-[20px] border border-white/10 rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.88)' }}>
-              <QueuePanelContent
-                queue={playQueue.length > 0 ? playQueue : (activePlaylist?.songs || [])}
-                currentSongId={currentSongId}
-                loadNeteaseSong={loadNeteaseSong}
-                removeFromQueue={(id: number) => setPlayQueue((q: NeteaseSong[]) => q.filter((s: NeteaseSong) => s.id !== id))}
-                onClose={() => setShowQueuePanel(false)}
-                accentHex={accentHex}
-              />
-            </div>
-          )}
           {/* Desktop Player Panel */}
           {hasTrack && (
             <DesktopPlayerPanel
               trackName={trackName}
+              artistName={artistName}
               isCapturing={isCapturing}
               theme={theme}
               onThemeChange={onThemeChange}
@@ -681,10 +719,6 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
               setPlayMode={setPlayMode}
               formatTime={formatTime}
               showThemeBtn
-              isRecording={isRecording}
-              hasLyrics={!!lyricsText}
-              onStartRecording={() => onStartRecording?.(lyricsText)}
-              onStopRecording={onStopRecording}
               coverUrl={currentCover}
             />
           )}
@@ -706,9 +740,6 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
             </div>
           )}
 
-          <div className="absolute bottom-[40px] right-[40px] text-[10px] uppercase tracking-[0.1em] opacity-30 select-none">
-            拖动旋转 • 点击脉冲
-          </div>
         </>
       )}
 
@@ -716,13 +747,20 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
       {isMobile && (
         <>
           {/* Mobile Brand Mark */}
-          <div className="absolute top-[12px] left-[16px] font-black text-[18px] tracking-[-1px] text-white z-50 select-none">
-            AJIN.
-          </div>
+          {watermarkVisible ? (
+            <div className="absolute top-[12px] left-[16px] z-50 pointer-events-auto select-none cursor-pointer" onClick={() => setWatermarkVisible(false)}>
+              <div className="font-black text-[18px] tracking-[-1px] text-white leading-none">AJIN.</div>
+              <div className="text-[7px] tracking-[0.2em] text-white/25">LANHU199-PLUS</div>
+            </div>
+          ) : (
+            <div className="absolute top-[12px] left-[16px] z-50 pointer-events-auto">
+              <button onClick={() => setWatermarkVisible(true)} className="text-[9px] text-white/20 hover:text-white/60 tracking-[0.15em]">⊕</button>
+            </div>
+          )}
 
           {/* Mobile Search Overlay */}
           {showSearchPanel && (
-            <MobileOverlay onClose={() => setShowSearchPanel(false)} title="Search">
+            <MobileOverlay onClose={() => setShowSearchPanel(false)} title="搜索">
               <SearchPanelContent
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
@@ -741,7 +779,7 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
 
           {/* Mobile Playlist Overlay */}
           {showPlaylistPanel && (
-            <MobileOverlay onClose={() => setShowPlaylistPanel(false)} title="Playlists">
+            <MobileOverlay onClose={() => setShowPlaylistPanel(false)} title="播放列表">
               <PlaylistPanelContent
                 playlists={playlists}
                 activePlaylist={activePlaylist}
@@ -828,26 +866,26 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
                   onClick={() => { setMobileMenuOpen(false); setShowSearchPanel(true); }}
                   className="w-full flex items-center gap-3 px-4 py-3 text-[11px] uppercase tracking-[0.15em] text-white/80 hover:bg-white/5 transition-colors"
                 >
-                  <Search size={14} /> Search
+                  <Search size={14} /> 搜索
                 </button>
                 <button
                   onClick={() => { setMobileMenuOpen(false); setShowPlaylistPanel(true); }}
                   className="w-full flex items-center gap-3 px-4 py-3 text-[11px] uppercase tracking-[0.15em] text-white/80 hover:bg-white/5 transition-colors"
                 >
-                  <ListMusic size={14} /> Playlist
+                  <ListMusic size={14} /> 播放列表
                 </button>
                 <div className="border-t border-white/5 my-1" />
                 <button
                   onClick={() => { setMobileMenuOpen(false); loadDemo(); }}
                   className="w-full flex items-center gap-3 px-4 py-3 text-[11px] uppercase tracking-[0.15em] text-white/80 hover:bg-white/5 transition-colors"
                 >
-                  <Music size={14} /> Demo
+                  <Music size={14} /> 示例
                 </button>
                 <button
                   onClick={() => { setMobileMenuOpen(false); fileInputRef.current?.click(); }}
                   className="w-full flex items-center gap-3 px-4 py-3 text-[11px] uppercase tracking-[0.15em] text-white/80 hover:bg-white/5 transition-colors"
                 >
-                  <Upload size={14} /> Upload
+                  <Upload size={14} /> 上传
                 </button>
                 <button
                   onClick={() => {
@@ -855,6 +893,7 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
                     if (engine.isCapturing) {
                       engine.stopCapture();
                       setTrackName('未选择曲目');
+                      setArtistName('');
                     } else {
                       engine.startCapture().then(() => {
                         if (engine.isCapturing) setTrackName('系统音频录制');
@@ -863,7 +902,7 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-3 text-[11px] uppercase tracking-[0.15em] transition-colors ${isCapturing ? 'text-[#ef4444]' : 'text-white/80 hover:bg-white/5'}`}
                 >
-                  <Radio size={14} /> {isCapturing ? '停止录制' : 'Capture'}
+                  <Radio size={14} /> {isCapturing ? '停止录制' : '录制'}
                 </button>
                 <div className="border-t border-white/5 my-1" />
                 <button
@@ -905,14 +944,11 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
               playMode={playMode}
               setPlayMode={setPlayMode}
               onThemeChange={onThemeChange}
-              isRecording={isRecording}
-              hasLyrics={!!lyricsText}
-              onStartRecording={() => onStartRecording?.(lyricsText)}
-              onStopRecording={onStopRecording}
               onClose={() => {
                 setPlayQueue([]);
                 setCurrentSongId(null);
                 setTrackName('未选择曲目');
+                setArtistName('');
                 setLyricsText('');
                 engine.pause();
               }}
@@ -927,6 +963,14 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
             className="hidden"
             onChange={handleFileChange}
           />
+
+          {/* Desktop Visualizer Overlay (always visible) */}
+          <VisualizerOverlay
+            accentHex={accentHex}
+            isPlaying={isPlaying}
+            isCapturing={isCapturing}
+            barCount={barCount}
+          />
         </>
       )}
 
@@ -934,7 +978,7 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
 
       {/* Lyrics Display */}
       {hasTrack && lyricsText && (
-        <LyricsDisplay lrcText={lyricsText} currentTime={currentTime} accentHex={accentHex} isPlaying={isPlaying} isMobile={isMobile} />
+        <LyricsDisplay lrcText={lyricsText} currentTime={currentTime} accentHex={accentHex} isPlaying={isPlaying} isMobile={isMobile} isVisible={lyricsVisible} lyricsStyle={lyricsStyle} />
       )}
 
       {/* 频率触发 Panel (shared - already works on both) */}
@@ -967,6 +1011,58 @@ export function UI({ theme, onThemeChange, isMobile = false, isRecording = false
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsHelp
+        isOpen={showShortcutsHelp}
+        onClose={() => setShowShortcutsHelp(false)}
+        accentHex={accentHex}
+      />
+
+      {/* Play History Panel */}
+      <PlayHistory
+        isOpen={showPlayHistory}
+        onClose={() => setShowPlayHistory(false)}
+        onLoadSong={(id: number) => {
+          const queue = getCurrentQueue();
+          const song = queue.find((s: NeteaseSong) => s.id === id);
+          if (song) loadNeteaseSong(song, queue);
+        }}
+        accentHex={accentHex}
+      />
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        barCount={barCount}
+        onBarCountChange={setBarCount}
+        lyricsVisible={lyricsVisible}
+        onLyricsVisibleChange={setLyricsVisible}
+        lyricsStyle={lyricsStyle}
+        onLyricsStyleChange={setLyricsStyle}
+        accentHex={accentHex}
+        maxHistoryItems={maxHistoryItems}
+        onMaxHistoryChange={setMaxHistoryItems}
+      />
+
+      {/* First-Time Tutorial */}
+      <FirstTimeTutorial accentHex={accentHex} />
+
+      {/* Brand Mark (outside pointer-events-none wrapper) */}
+      {watermarkVisible ? (
+        <div
+          className={`fixed z-[200] pointer-events-auto select-none cursor-pointer ${isMobile ? 'top-[12px] left-[16px]' : 'top-[40px] left-[100px]'}`}
+          onClick={() => setWatermarkVisible(false)}
+        >
+          <div className={`font-black tracking-[-1px] text-white leading-none ${isMobile ? 'text-[18px]' : 'text-[24px]'}`}>AJIN.</div>
+          <div className={`${isMobile ? 'text-[7px] tracking-[0.2em]' : 'text-[10px] tracking-[0.3em]'} text-white/30 mt-0.5`}>LANHU199-PLUS</div>
+        </div>
+      ) : (
+        <div className={`fixed z-[200] pointer-events-auto select-none cursor-pointer ${isMobile ? 'top-[12px] left-[16px]' : 'top-[40px] left-[100px]'}`}>
+          <button onClick={() => setWatermarkVisible(true)} className={`text-white/20 hover:text-white/60 tracking-[0.15em] uppercase ${isMobile ? 'text-[9px]' : 'text-[10px]'}`} title="显示水印">⊕</button>
         </div>
       )}
     </div>
@@ -1052,7 +1148,7 @@ function SearchPanelContent({
                 <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                 搜索中
               </span>
-            ) : "搜 索"}
+            ) : "搜索"}
           </button>
         </form>
         {searchStatus && <div className="mt-3 text-[11px] text-white/45 animate-pulse">{searchStatus}</div>}
@@ -1073,7 +1169,7 @@ function SearchPanelContent({
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-[3px] overflow-hidden flex-shrink-0 bg-white/5">
                   {song.picUrl ? (
-                    <img src={song.picUrl} alt="" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" />
+                    <img src={song.picUrl} alt="" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" onError={imgOnError} />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-white/10">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
@@ -1141,7 +1237,7 @@ function PlaylistPanelContent({
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3 text-[12px] uppercase tracking-[0.2em] text-white/70">
             <ListMusic size={15} />
-            Playlists
+            播放列表
           </div>
           <button onClick={onClose} className="text-[10px] uppercase tracking-[0.15em] text-white/40 hover:text-white">关闭</button>
         </div>
@@ -1250,158 +1346,6 @@ function SongToAddPanel({
 
 /* ==================== DESKTOP PLAYER PANEL ==================== */
 
-function DesktopPlayerPanel({
-  trackName, isCapturing, theme, onThemeChange, accentHex,
-  currentTime, duration, volume, setVolume,
-  isPlaying, togglePlay, playFromQueue, getCurrentQueue,
-  playMode, setPlayMode, formatTime, showThemeBtn,
-  isRecording, hasLyrics, onStartRecording, onStopRecording,
-  coverUrl
-}: {
-  trackName: string; isCapturing: boolean; theme: string; onThemeChange: (t: string) => void;
-  accentHex: string; currentTime: number; duration: number; volume: number; setVolume: (v: number) => void;
-  isPlaying: boolean; togglePlay: () => void; playFromQueue: (d: 1 | -1) => void;
-  getCurrentQueue: () => NeteaseSong[]; playMode: PlayMode; setPlayMode: (m: PlayMode | ((p: PlayMode) => PlayMode)) => void;
-  formatTime: (t: number) => string; showThemeBtn?: boolean;
-  isRecording?: boolean; hasLyrics?: boolean; onStartRecording?: () => void; onStopRecording?: () => void;
-  coverUrl?: string;
-}) {
-  return (
-    <div className="absolute top-[40px] right-[40px] w-[300px] p-6 rounded-sm z-50 pointer-events-auto border border-white/10 overflow-hidden relative" style={{ background: 'rgba(5,10,15,0.88)' }}>
-      {coverUrl && (
-        <div className="absolute inset-0 -z-10">
-          <img src={coverUrl} alt="" className="w-full h-full object-cover opacity-25" />
-          <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(5,10,15,0.5), rgba(5,10,15,0.92))' }} />
-        </div>
-      )}
-      <div className="flex justify-between items-start mb-1">
-        <div className="flex items-center gap-3 min-w-0">
-          {coverUrl && (
-            <div className="w-10 h-10 rounded-[4px] overflow-hidden flex-shrink-0 shadow-lg ring-1 ring-white/10">
-              <img src={coverUrl} alt="" className="w-full h-full object-cover" />
-            </div>
-          )}
-          <div className="text-[16px] font-light tracking-[0.05em] text-white truncate" title={trackName}>
-            {trackName}
-          </div>
-        </div>
-        {showThemeBtn && (
-          <button
-            onClick={() => {
-              const keys = ['auto', ...Object.keys(themes)];
-              const nextIndex = (keys.indexOf(theme) + 1) % keys.length;
-              onThemeChange(keys[nextIndex]);
-            }}
-            className="text-white/40 hover:text-white transition-colors"
-            title="切换主题"
-          >
-            <Palette size={16} />
-          </button>
-        )}
-        {!isRecording ? (
-          <button
-            onClick={onStartRecording}
-            disabled={!hasLyrics}
-            className="ml-2 text-white/40 hover:text-[#ff3333] transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-            title="录制视频（自动停止于歌曲结束）"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="6" />
-              <circle cx="12" cy="12" r="9" strokeDasharray="4 4" />
-            </svg>
-          </button>
-        ) : (
-          <span className="ml-2 text-[#ff3333] animate-pulse" title="录制中…">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="6" />
-            </svg>
-          </span>
-        )}
-      </div>
-      <div className="text-[12px] opacity-50 uppercase mb-6 tracking-wider">
-         {isCapturing ? '系统音频录制' : '本地音频'}
-         <span className="ml-2 text-[#3b82f6] text-[10px]">&bull; {theme === 'auto' ? '随歌自适应' : themes[theme]?.name}</span>
-      </div>
-
-      {/* Progress bar */}
-      <div className={`h-[20px] mb-5 relative flex items-end group ${isCapturing ? 'opacity-30 pointer-events-none' : ''}`}>
-         <div className="w-full relative h-[2px] bg-white/10 group-hover:h-[4px] transition-all">
-            <div
-               className="absolute top-0 left-0 h-full"
-               style={{ backgroundColor: accentHex, width: `${duration ? (currentTime / duration) * 100 : 0}%`, boxShadow: `0 0 10px ${accentHex}88` }}
-             />
-         </div>
-         <input
-           type="range"
-           min={0}
-           max={duration || 100}
-           step="0.01"
-           value={currentTime}
-           onPointerDown={() => { seekingRef.current = true; }}
-           onPointerUp={() => { seekingRef.current = false; }}
-           onChange={(e) => {
-             if (engine.audioElement) {
-               const newTime = parseFloat(e.target.value);
-               engine.audioElement.currentTime = newTime;
-             }
-           }}
-           className="absolute bottom-0 left-0 w-full opacity-0 cursor-pointer h-full"
-         />
-      </div>
-
-      <div className={`flex justify-between items-center text-[10px] uppercase tracking-[0.1em] opacity-80 ${isCapturing ? 'opacity-30 pointer-events-none' : ''}`}>
-         <span className="w-8">{formatTime(currentTime)}</span>
-         <div className="flex items-center gap-4">
-            <button onClick={() => playFromQueue(-1)}
-              className="hover:text-white transition-colors disabled:opacity-25 disabled:hover:text-inherit"
-              disabled={getCurrentQueue().length === 0} title="上一首">
-              <SkipBack size={14} />
-            </button>
-            <button onClick={togglePlay} className="hover:text-white transition-colors">
-              {isPlaying ? <Pause size={14} className="fill-current" /> : <Play size={14} className="fill-current" />}
-            </button>
-            <button onClick={() => playFromQueue(1)}
-              className="hover:text-white transition-colors disabled:opacity-25 disabled:hover:text-inherit"
-              disabled={getCurrentQueue().length === 0} title="下一首">
-              <SkipForward size={14} />
-            </button>
-            <button onClick={() => setPlayMode((mode: PlayMode) => mode === 'sequence' ? 'shuffle' : 'sequence')}
-              className="hover:text-white transition-colors"
-              title={playMode === 'sequence' ? '顺序播放' : '随机播放'}
-              style={{ color: playMode === 'shuffle' ? accentHex : undefined }}>
-              {playMode === 'sequence' ? <Repeat size={14} /> : <Shuffle size={14} />}
-            </button>
-         </div>
-
-         <div className="flex items-center gap-2 group w-20 justify-end">
-            <input
-              type="range"
-              min={0} max={1} step={0.01}
-              value={volume}
-              onChange={(e) => {
-                const val = parseFloat(e.target.value);
-                engine.audioElement.volume = val;
-                setVolume(val);
-              }}
-              className="w-12 h-1 accent-current opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer aspect-auto bg-white/20 appearance-none rounded-full"
-              style={{ accentColor: accentHex }}
-            />
-            <Volume2
-              size={12}
-              className="opacity-50 hover:opacity-100 transition-opacity cursor-pointer flex-shrink-0"
-              onClick={() => {
-                const val = volume > 0 ? 0 : 1;
-                engine.audioElement.volume = val;
-                setVolume(val);
-              }}
-            />
-         </div>
-         <span className="w-8 text-right">{formatTime(duration)}</span>
-      </div>
-    </div>
-  );
-}
-
 /* ==================== QUEUE PANEL CONTENT ==================== */
 
 function QueuePanelContent({
@@ -1477,7 +1421,6 @@ function MobilePlayerBar({
   volume, setVolume, songToAdd, newPlaylistName, setNewPlaylistName,
   addSongToPlaylist, createPlaylistAndAddSong, onClose,
   playMode, setPlayMode, onThemeChange,
-  isRecording, hasLyrics, onStartRecording, onStopRecording
 }: {
   trackName: string; isCapturing: boolean; theme: string;
   accentHex: string; currentTime: number; duration: number;
@@ -1490,7 +1433,6 @@ function MobilePlayerBar({
   createPlaylistAndAddSong: () => void; onClose: () => void;
   playMode: PlayMode; setPlayMode: (m: PlayMode | ((p: PlayMode) => PlayMode)) => void;
   onThemeChange: (t: string) => void;
-  isRecording?: boolean; hasLyrics?: boolean; onStartRecording?: () => void; onStopRecording?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1536,23 +1478,6 @@ function MobilePlayerBar({
               disabled={getCurrentQueue().length === 0}>
               <SkipForward size={18} />
             </button>
-            {/* Record button (auto-stop on song end, no stop button) */}
-            {!isRecording ? (
-              <button onClick={onStartRecording} disabled={!hasLyrics}
-                className="text-white/40 hover:text-[#ff3333] transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-                title="录制视频（自动停止）">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="6" />
-                  <circle cx="12" cy="12" r="9" strokeDasharray="4 4" />
-                </svg>
-              </button>
-            ) : (
-              <span className="text-[#ff3333] animate-pulse" title="录制中…">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="12" r="6" />
-                </svg>
-              </span>
-            )}
           </div>
         </div>
       </div>
@@ -1628,10 +1553,10 @@ function MobilePlayerBar({
                 disabled={getCurrentQueue().length === 0}>
                 <SkipForward size={24} />
               </button>
-              <button onClick={() => setPlayMode((mode: PlayMode) => mode === 'sequence' ? 'shuffle' : 'sequence')}
+              <button onClick={() => setPlayMode((mode: PlayMode) => mode === 'sequence' ? 'shuffle' : mode === 'shuffle' ? 'repeat-one' : 'sequence')}
                 className="hover:text-white transition-colors"
-                style={{ color: playMode === 'shuffle' ? accentHex : undefined }}>
-                {playMode === 'sequence' ? <Repeat size={20} /> : <Shuffle size={20} />}
+                style={{ color: playMode !== 'sequence' ? accentHex : undefined }}>
+                {playMode === 'sequence' ? <Repeat size={20} /> : playMode === 'shuffle' ? <Shuffle size={20} /> : <span className="relative"><Repeat size={20} /><span className="absolute -top-1 -right-1 text-[8px] font-bold">1</span></span>}
               </button>
             </div>
 

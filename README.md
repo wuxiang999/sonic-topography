@@ -1,194 +1,47 @@
-# Sonic Topography — Lanhu Plus 🎵🌊
+# Sonic Topography — Lanhu Plus 🎵🏔️
 
-> 基于 Sonic Topography 的增强版，3D 音乐可视化 + 完整网易云音乐播放器
+> 3D 音乐可视化播放器 · 网易云音乐增强版 · 全平台自适应
 
-## ✨ 新特性（Lanhu Plus）
+基于 Sonic Topography 深度改造，集成网易云音乐完整播放、3D 频谱可视化、多端适配、系统音频捕获，打造沉浸式听歌体验。
 
-- 🎵 **内置网易云 API** — 完整歌曲播放，无30秒预览限制，无需额外部署
-- 🎨 **智能风格分类** — 根据歌手/歌名/时长自动匹配视觉风格（摇滚、民谣、电子、氛围等）
-- 🎬 **视频渲染模式** — 支持 headless Chrome 录制可视化视频（WebM + FFmpeg 合成音频）
-- 🇨🇳 **全面汉化** — 中文界面、中文歌单名称
-- 📱 **多端适配** — 手机/平板/桌面端自动匹配 UI 布局和画质
-- 📊 **性能自适应** — 检测 CPU/GPU/内存自动调整画质（低/中/高三档）
-- 📝 **歌词翻译** — 支持显示网易云歌词与翻译歌词
-- 💾 **歌单持久化** — 本地 `data/playlists.json` 存储，重启不丢失
-- 🎮 **内置 Demo** — 默认演示曲 `grey-track.mp3`
+## ✨ 核心特性
 
-## 功能
+- 🎵 **完整网易云播放** — 搜索、歌单、歌词、播放，无需 30 秒预览，无额外服务部署
+- 🌊 **3D 音频响应地形** — Three.js + React Three Fiber 实时可视化，多场景切换
+- 🎚️ **频谱可视化** — 底部谱条数量可调（16–128），颜色随主题自适应，播放时叠加呼吸动效
+- 🔊 **系统音频捕获** — 捕获任意系统输出音频驱动动画（Spotify / YouTube / 本地播放器）
+- 🎤 **三式歌词显示** — 3D 透视滚动 / 居中简洁 / 逐字 Karaoke 高亮，支持切换
+- 🎨 **主题随歌自适应** — 智能风格分类（摇滚 / 民谣 / 电子 / 氛围 / 流行），色彩实时渐变
+- 📱 **全端适配** — 桌面 / 平板 / 手机自动匹配 UI 布局与画质等级
+- ⚡ **性能自适应** — CPU / GPU / 内存检测自动降级（高 / 中 / 低三档）
+- 🎬 **视频渲染模式** — headless Chrome 录制可视化视频（WebM + 音频合成）
+- 🔄 **歌曲平滑切换** — 渐入淡出（~1.2s）过渡，切换无突兀
+- 💾 **播放记录与歌单** — 本地持久化存储，重启不丢失
 
-- 3D 音频响应式地形可视化（Three.js + React Three Fiber）
-- 内置 Demo 音频播放
-- 支持上传音频文件和 `.lrc` 歌词
-- 网易云音乐搜索、过滤不可播放结果
-- 歌词加载与翻译歌词显示
-- 歌单管理（收藏/视觉集）：新增、删除、排序
-- 上一首 / 下一首、顺序播放 / 随机播放
-- Windows 一键启动脚本
-
----
-
-## 📱 多端适配
-
-前端基于响应式设计，自动适配不同屏幕尺寸：
-
-| 设备 | UI 布局 | 3D 画质 | 自动调整 |
-|------|---------|---------|----------|
-| 🖥️ 桌面端 | 全屏完整 UI | 高画质（抗锯齿、大网格） | 硬件检测自动降级 |
-| 📱 手机端 | 精简移动端 UI | 低画质（小网格、降低粒子） | dpr 缩放优化 |
-| 📟 平板端 | 中等 UI | 中等画质 | 自适应平衡 |
-
-### 性能自适应系统
-
-根据设备硬件信息自动分级：
-
-- **CPU 核心数**（≥8 核心加分，≤4 核心降级）
-- **Device Memory**（≥8GB 高分，≤4GB 降级）
-- **GPU 型号**（低端 GPU 如 Mali、Adreno 5/6 自动降级）
-- **用户代理检测**（移动端自动降级）
-
-分三级：`high` / `medium` / `low`，分别控制：
-- Canvas DPR
-- 地形网格密度
-- 流星数量
-- 粒子数量
-- 帧跳过策略
-- 抗锯齿开关
-- 功耗模式
-
----
-
-## 🎵 音乐 API
-
-音乐服务已内置在 `local-server.mjs` 中，**无需额外部署 PHP 服务器**。`npm start` 即可使用搜索、歌词、播放链接等功能。
-
-### 配置 Cookie（获取完整歌曲）
-
-**无 Cookie**：搜索和歌词功能正常可用。
-**有 Cookie**：还可获取完整歌曲播放链接（无需 30 秒预览）。
-
-```bash
-# 方式一：环境变量（推荐）
-NETEASE_COOKIE="MUSIC_U=xxx; JSESSIONID-WYYY=xxx" npm start
-
-# 方式二：cookie.txt 文件
-# 创建 api/cookie.txt，写入网易云 Cookie
-echo "MUSIC_U=xxx; JSESSIONID-WYYY=xxx" > api/cookie.txt
-npm start
-```
-
-#### 获取 Cookie 步骤
+## 🖼️ 界面预览
 
 ```
-1. 浏览器打开 https://music.163.com 并登录你的账号
-2. F12 → Application/应用 → Cookies → https://music.163.com
-3. 全选 Cookie 列表，复制所有内容（每条 cookie 以 ; 分隔）
-4. 粘贴到 api/cookie.txt 保存
-5. 重启服务即可
+┌─────────────────────────────────────────────────────────┐
+│  侧边栏（悬停）    │         3D 地形可视化               │
+│  ─────────────     │                                     │
+│  搜索              │     + 播放卡片（右下角毛玻璃）       │
+│  播放列表          │     + 频谱条底部可视化              │
+│  播放历史          │     + 歌词显示（三样式）            │
+│  频率触发          │     + 水印（可点击隐藏）            │
+│  ─────────────     │                                     │
+│  示例 · 上传       │                                     │
+│  系统音频(捕获)    │                                     │
+│  ─────────────     │                                     │
+│  设置 → 弹出面板   │                                     │
+└─────────────────────────────────────────────────────────┘
 ```
-
-> 💡 更新 Cookie 后无需重启服务，发送 `SIGHUP` 信号即可热重载：
-> ```bash
-> kill -HUP <pid>
-> ```
-
-### `api/` 目录结构
-
-```
-sonic-topography/
-└── api/
-    ├── .gitkeep           ← 保留目录（可删除）
-    └── cookie.txt         ← 你的网易云 Cookie（不会提交到 Git）
-```
-
-### 接口文档
-
-所有 API 端点通过本地服务器提供（默认 `http://localhost:4173`），前端直接调用。
-
-#### 搜索歌曲
-
-```
-GET /api/netease/search?keywords={关键词}&limit={数量}
-```
-
-| 参数 | 必填 | 默认 | 说明 |
-|------|------|------|------|
-| `keywords` | ✅ | — | 搜索关键词（歌手/歌名） |
-| `limit` | ❌ | 12 | 返回数量，最大 20 |
-
-**响应示例：**
-```json
-{
-  "songs": [
-    {
-      "id": 5257138,
-      "name": "屋顶",
-      "artist": "周杰伦 / 温岚",
-      "album": "男女情歌对唱冠军全记录",
-      "duration": 319039,
-      "picUrl": "https://p3.music.126.net/xxx.jpg?param=300y300",
-      "style": "ballad"
-    }
-  ]
-}
-```
-
-`style` 字段为自动风格分类：`rock` / `ballad` / `electronic` / `ambient` / `upbeat` / `pop`
-
-#### 获取歌词
-
-```
-GET /api/netease/lyric?id={歌曲ID}
-```
-
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `id` | ✅ | 网易云歌曲 ID |
-
-**响应示例：**
-```json
-{
-  "lyric": "[00:00.00] 作曲 : 周杰伦...",
-  "translatedLyric": ""
-}
-```
-
-#### 获取播放链接
-
-```
-GET /api/netease/url?id={歌曲ID}&level={音质}
-```
-
-| 参数 | 必填 | 默认 | 说明 |
-|------|------|------|------|
-| `id` | ✅ | — | 歌曲 ID |
-| `level` | ❌ | `standard` | 音质：`standard` / `exhigh` / `lossless` / `hires` |
-
-**响应示例：**
-```json
-{
-  "url": "http://m801.music.126.net/..."
-}
-```
-
-> ⚠️ 需要配置网易云 Cookie 才能获取有效播放链接，否则返回 `null`。
-
-#### 音频代理
-
-```
-GET /api/netease/audio?id={歌曲ID}&level={音质}
-```
-
-流式代理网易云音频到前端（解决跨域和混合内容问题），直接返回音频流。`level` 参数可选。
-
----
 
 ## 📦 安装与部署
 
 ### 前置条件
 
 - [Node.js](https://nodejs.org/) v18+
-- （推荐）npm v9+
-- （可选）FFmpeg（用于视频渲染音频合成）
+- npm v9+
 
 ### 快速开始
 
@@ -200,40 +53,90 @@ cd sonic-topography
 # 2. 安装依赖
 npm install
 
-# 3. 开发模式运行（热重载）
+# 3. 开发模式（热重载）
 npm run dev
-# -> 访问 http://localhost:3000
+# → 访问 http://localhost:3000
 
 # 4. 生产构建并启动
 npm run build
 npm start
-# -> 访问 http://localhost:4173
+# → 访问 http://localhost:4173
 ```
 
-### Windows 用户
+### 一键启动（Windows）
 
-双击 `start-sonic-topography.bat`，自动完成：
-1. 检测 Node.js 是否安装
-2. 自动 `npm install` 安装依赖
-3. 自动 `npm run build` 构建
-4. 打开浏览器 `http://127.0.0.1:4173`
-5. 启动本地服务器
+双击 `start-sonic-topography.bat`，自动完成依赖安装、构建、启动。
+
+## ⚙️ 配置
+
+### 网易云 Cookie（可选，获取完整歌曲）
+
+**无 Cookie**：搜索、歌词正常可用。
+**有 Cookie**：可获取完整歌曲播放链接（无需 30 秒预览）。
+
+```bash
+# 方式一：环境变量（推荐）
+NETEASE_COOKIE="MUSIC_U=xxx; JSESSIONID-WYYY=xxx" npm start
+
+# 方式二：api/cookie.txt 文件
+echo "MUSIC_U=xxx; JSESSIONID-WYYY=xxx" > api/cookie.txt
+npm start
+```
+
+**获取 Cookie 步骤**：
+1. 浏览器打开 https://music.163.com 并登录
+2. F12 → Application → Cookies → https://music.163.com
+3. 全选 Cookie 列表复制（每条以 `;` 分隔）
+4. 粘贴到 `api/cookie.txt`，重启服务
 
 ### 环境变量
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `NETEASE_COOKIE` | 网易云登录 Cookie（获取完整歌曲播放链接） | 无（搜索/歌词无需 Cookie） |
-| `PORT` | 生产服务器端口 | `4173` |
-| `RENDER_BASE_URL` | 视频渲染模式的基础 URL | `http://localhost:4173/music/` |
-| `CHROME_PATH` | 视频渲染用的 Chrome 路径 | 自动检测 Puppeteer |
-| `STATIC_AUDIO_PATH` | 静态音频文件路径 | `./static-audio/grey-track.mp3` |
+| `NETEASE_COOKIE` | 网易云 Cookie | 无 |
+| `PORT` | 生产端口 | `4173` |
+| `RENDER_BASE_URL` | 渲染模式基础 URL | `http://localhost:4173/music/` |
+| `CHROME_PATH` | Chrome 路径（渲染用） | 自动检测 |
+| `STATIC_AUDIO_PATH` | 内置演示音频 | `./static-audio/grey-track.mp3` |
 
----
+## 🎮 快捷键
 
-## 🎬 视频渲染
+| 按键 | 功能 |
+|------|------|
+| `H` | 显示/隐藏快捷键帮助 |
+| `Space` | 播放/暂停 |
+| `←` / `→` | 上一首 / 下一首 |
+| `↑` / `↓` | 音量增减 |
 
-可视化视频录制功能，将 3D 音乐可视化录制成 WebM 视频（可合成音频）。
+## 📐 侧边栏功能
+
+悬停屏幕左侧边缘展开，分三类：
+
+| 类别 | 入口 | 说明 |
+|------|------|------|
+| **功能** | 搜索 | 网易云搜索歌曲、过滤不可播放 |
+| | 播放列表 | 管理收藏 / 视觉集歌单 |
+| | 播放历史 | 最近播放记录（可设保留条数） |
+| | 频率触发 | 频段触发脉冲 / 流星特效 |
+| **工具** | 示例 | 加载内置演示曲目 |
+| | 上传 | 上传本地音频 / .lrc 歌词 |
+| | 系统音频 | 捕获系统输出音频驱动动画 |
+| **设置** | 设置 → 面板 | 频谱条数 / 歌词样式 / 播放记录 |
+
+## 🎚️ 设置面板
+
+点击侧边栏「设置」弹出面板：
+
+| 分类 | 选项 | 范围 |
+|------|------|------|
+| 频谱显示 | 条形数量 | 16–128（步长 8） |
+| 歌词设置 | 显示歌词 | 开 / 关 |
+| | 歌词样式 | 滚动（3D 透视）/ 居中简洁 / 逐字高亮 |
+| 播放记录 | 保留条数 | 10–100（步长 10） |
+
+## 🎬 视频渲染（高级）
+
+录制可视化视频，自动合成音频：
 
 ```bash
 cd scripts
@@ -241,51 +144,60 @@ npm install
 node render-video.mjs [时长秒数] [输出路径]
 ```
 
-默认录制 30 秒，输出到 `./render-output.webm`。
+需安装 Puppeteer + FFmpeg。
 
-需要安装：
-- Puppeteer（Chrome 浏览器自动化）
-- FFmpeg（音频合成）
-
----
-
-## 项目结构
+## 🏗️ 项目结构
 
 ```
 sonic-topography/
-├── src/                    # React 前端源码
-│   ├── components/         # UI + 3D 可视化组件
-│   │   ├── AudioVisualizer/  # 3D 地形可视化（Three.js）
-│   │   └── UI/               # 播放器 UI（搜索、歌词、歌单）
+├── src/
+│   ├── components/
+│   │   ├── AudioVisualizer/     # 3D 地形可视化（Three.js）
+│   │   └── UI/                  # 播放器 UI 组件
+│   │       ├── UI.tsx            # 主 UI（侧边栏 / 布局 / 状态）
+│   │       ├── DesktopPlayerPanel.tsx  # 桌面播放卡片（毛玻璃）
+│   │       ├── VisualizerOverlay.tsx   # 底部频谱条可视化
+│   │       ├── LyricsDisplay.tsx       # 三式歌词显示
+│   │       ├── SettingsPanel.tsx       # 设置面板
+│   │       ├── FirstTimeTutorial.tsx   # 首次引导
+│   │       ├── KeyboardShortcutsHelp.tsx # 快捷键帮助
+│   │       └── PlayHistory.tsx         # 播放历史
 │   ├── lib/
-│   │   ├── AudioEngine.ts    # 音频引擎（Web Audio API）
-│   │   ├── performance.ts    # 设备性能检测系统
-│   │   ├── themes.ts         # 主题色彩系统
-│   │   ├── lyrics.ts         # 歌词解析
-│   │   └── metadata.ts       # 音乐元数据处理
-│   ├── App.tsx               # 主应用组件（响应式 + 渲染模式）
-│   └── main.tsx              # 入口文件
-├── api/                    # 网易云 Cookie 配置（可选）
-├── scripts/                 # 工具脚本
-│   └── render-video.mjs     # 视频渲染脚本（Puppeteer）
-├── public/                  # 静态资源
-├── static-audio/            # 内置演示音频
-├── data/                    # 运行时数据（歌单等，不提交 Git）
-├── local-server.mjs         # 生产服务器（Express + 内置网易云 API）
-├── vite.config.ts           # Vite 构建配置
+│   │   ├── AudioEngine.ts       # 音频引擎（Web Audio API + 渐入淡出）
+│   │   ├── themes.ts            # 主题色彩系统（随歌自适应）
+│   │   ├── lyrics.ts            # LRC 歌词解析
+│   │   ├── metadata.ts          # 音频元数据提取
+│   │   └── performance.ts       # 设备性能检测
+│   ├── App.tsx                  # 主应用
+│   └── main.tsx                 # 入口
+├── api/                        # 网易云 Cookie（可选，不提交）
+├── scripts/                    # 视频渲染脚本
+├── static-audio/               # 内置演示曲目
+├── local-server.mjs            # Express 服务器 + 网易云 API
+├── vite.config.ts              # Vite 构建配置
 └── start-sonic-topography.bat  # Windows 一键启动
 ```
 
----
+## 📡 API
 
-## 注意事项
+所有接口通过本地服务器提供（默认 `http://localhost:4173`）。
 
-- 🎵 网易云音乐功能使用的是非官方网页接口，通过本地服务器代理请求
-- ⚠️ 可播放状态可能因版权、会员、地区或登录限制发生变化
-- 📁 `data/` 目录下的歌单文件是本地数据，**不要提交到 Git**
-- 🌐 前端播放器默认 `base: "/music/"`，如需修改请在 `vite.config.ts` 中更改
-- 🔊 视频渲染模式需要 Chrome/Chromium 和 FFmpeg 环境
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/netease/search?keywords=xxx` | GET | 搜索歌曲（自动风格分类） |
+| `/api/netease/lyric?id=xxx` | GET | 获取歌词 + 翻译 |
+| `/api/netease/url?id=xxx` | GET | 获取播放链接 |
+| `/api/netease/audio?id=xxx` | GET | 音频代理（防跨域） |
+| `/api/netease/toplist` | GET | 热歌榜 |
+| `/api/netease/playlist?id=xxx` | GET | 歌单详情 |
 
-## License
+## ⚠️ 注意事项
+
+- 网易云接口非官方，通过本地服务器代理请求
+- 可播放状态因版权 / 会员 / 地区而异
+- `data/` 目录运行时数据**不要提交 Git**
+- 前端默认 `base: "/music/"`，需 nginx 反代配置
+
+## 📄 License
 
 MIT

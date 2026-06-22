@@ -61,5 +61,17 @@ export const themes: Record<string, ThemeColors> = {
     uWarmEdge: new THREE.Color(0.7, 0.7, 0.7), // Light grey
     uRippleColor: new THREE.Color(1.0, 1.0, 1.0),
     uGlowIntensity: 0.8,
+  },
+  'dj-club': {
+    name: 'DJ Club',
+    id: 'dj-club',
+    uBaseColor1: new THREE.Color(0.01, 0.00, 0.02),
+    uBaseColor2: new THREE.Color(0.03, 0.00, 0.05),
+    uCoolCore: new THREE.Color(0.2, 1.0, 1.0),   // Cyan
+    uCoolEdge: new THREE.Color(1.0, 0.1, 0.5),   // Hot pink
+    uWarmCore: new THREE.Color(1.0, 0.9, 0.1),   // Yellow
+    uWarmEdge: new THREE.Color(1.0, 0.3, 0.0),   // Orange-red
+    uRippleColor: new THREE.Color(1.0, 0.8, 0.2),
+    uGlowIntensity: 2.2,
   }
 };
