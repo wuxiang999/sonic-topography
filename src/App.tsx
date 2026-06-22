@@ -43,6 +43,9 @@ export default function App() {
   const [theme, setTheme] = useState('auto');
   const [currentCover, setCurrentCover] = useState('');
   const [renderRecHidden, setRenderRecHidden] = useState(false);
+  const [userQuality, setUserQuality] = useState<'low' | 'medium' | 'high' | null>(null);
+  const [userAntialias, setUserAntialias] = useState<boolean | null>(null);
+  const [uiHidden, setUiHidden] = useState(false);
 
   // ── Session restore ─────────────────────────────────────────
   useEffect(() => {
@@ -323,6 +326,10 @@ export default function App() {
             engine.audioElement.muted = !engine.audioElement.muted;
           }
           break;
+        case 'KeyU':
+          e.preventDefault();
+          setUiHidden(prev => !prev);
+          break;
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -336,12 +343,20 @@ export default function App() {
   // Auto-detect device performance
   const perf = getDevicePerformance();
 
-  // Render mode: forced quality, normal mode: auto-detect
-  const canvasDpr = renderMode ? [1, 1] : perf.dpr;
+  // User overrides for quality / antialias (null = use auto-detect)
+  const effectiveQuality = userQuality || perf.perfLevel;
+  const effectiveAntialias = userAntialias !== null ? userAntialias : perf.antialias;
+
+  // dpr/gl by quality level
+  const qualityDpr: Record<string, [number, number]> = { low: [0.5, 1], medium: [0.75, 1.5], high: [1, 2] };
+  const qualityGrid: Record<string, number> = { low: 50, medium: 80, high: 100 };
+
+  // Render mode: forced quality, normal mode: user override (or auto-detect)
+  const canvasDpr = renderMode ? [1, 1] : qualityDpr[effectiveQuality];
   const canvasPerf = renderMode ? { min: 1 } : { min: 0.3 };
   const canvasGl = renderMode
     ? { antialias: true, alpha: false, powerPreference: 'high-performance' as const, preserveDrawingBuffer: true }
-    : { antialias: perf.antialias, alpha: false, powerPreference: perf.powerPreference as WebGLPowerPreference, preserveDrawingBuffer: true };
+    : { antialias: effectiveAntialias, alpha: false, powerPreference: perf.powerPreference as WebGLPowerPreference, preserveDrawingBuffer: true };
 
   return (
     <div
@@ -354,16 +369,22 @@ export default function App() {
           onThemeChange={setTheme}
           isMobile={isMobile}
           onCoverChange={setCurrentCover}
+          uiHidden={uiHidden}
+          onUiHiddenChange={setUiHidden}
+          userQuality={userQuality}
+          onQualityChange={setUserQuality}
+          userAntialias={userAntialias}
+          onAntialiasChange={setUserAntialias}
         />
       )}
-      <div className={renderMode ? 'fixed inset-0' : 'absolute inset-0 z-0'}>
+      <div className={renderMode ? 'fixed inset-0' : `absolute inset-0 ${uiHidden ? 'z-[1]' : 'z-0'}`}>
         <Canvas
           camera={{ position: [35, 25, 35], fov: 45 }}
           dpr={canvasDpr}
           performance={canvasPerf}
           gl={canvasGl}
         >
-          <MapScene theme={theme} isMobile={isMobile} perfLevel={perf.perfLevel} coverUrl={currentCover} isDJMode={isDJMode} />
+          <MapScene theme={theme} isMobile={isMobile} perfLevel={effectiveQuality} coverUrl={currentCover} isDJMode={isDJMode} />
         </Canvas>
       </div>
       {renderMode && !renderRecHidden && (

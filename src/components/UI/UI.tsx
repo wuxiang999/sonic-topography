@@ -72,9 +72,15 @@ interface UIProps {
   onThemeChange: (t: string) => void;
   isMobile?: boolean;
   onCoverChange?: (url: string) => void;
+  uiHidden?: boolean;
+  onUiHiddenChange?: (v: boolean) => void;
+  userQuality?: 'low' | 'medium' | 'high' | null;
+  onQualityChange?: (v: 'low' | 'medium' | 'high' | null) => void;
+  userAntialias?: boolean | null;
+  onAntialiasChange?: (v: boolean | null) => void;
 }
 
-export function UI({ theme, onThemeChange, isMobile = false, onCoverChange }: UIProps) {
+export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHidden = false, onUiHiddenChange, userQuality, onQualityChange, userAntialias, onAntialiasChange }: UIProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const demoAudioUrl = '/music/demo.mp3';
   const demoLyricsUrl = '/music/demo.lrc';
@@ -571,6 +577,9 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange }: UI
   const [currentCover, setCurrentCover] = useState('');
   const hasTrack = trackName !== '未选择曲目';
 
+  // ── No-UI mode: render nothing ────────────────
+  if (uiHidden) return null;
+
   return (
     <div
       className="absolute inset-0 pointer-events-none z-10 flex w-full h-full"
@@ -1049,6 +1058,12 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange }: UI
         onMaxHistoryChange={setMaxHistoryItems}
         showStats={showStats}
         onStatsVisibleChange={setShowStats}
+        uiHidden={uiHidden}
+        onUiHiddenChange={onUiHiddenChange}
+        userQuality={userQuality}
+        onQualityChange={onQualityChange}
+        userAntialias={userAntialias}
+        onAntialiasChange={onAntialiasChange}
       />
 
       {/* First-Time Tutorial */}

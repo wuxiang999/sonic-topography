@@ -16,6 +16,12 @@ interface SettingsPanelProps {
   onMaxHistoryChange: (n: number) => void;
   showStats: boolean;
   onStatsVisibleChange: (v: boolean) => void;
+  uiHidden?: boolean;
+  onUiHiddenChange?: (v: boolean) => void;
+  userQuality?: 'low' | 'medium' | 'high' | null;
+  onQualityChange?: (v: 'low' | 'medium' | 'high' | null) => void;
+  userAntialias?: boolean | null;
+  onAntialiasChange?: (v: boolean | null) => void;
 }
 
 const lyricsStyles: { value: LyricsStyleOption; label: string; desc: string }[] = [
@@ -38,6 +44,12 @@ export function SettingsPanel({
   onMaxHistoryChange,
   showStats,
   onStatsVisibleChange,
+  uiHidden = false,
+  onUiHiddenChange,
+  userQuality,
+  onQualityChange,
+  userAntialias,
+  onAntialiasChange,
 }: SettingsPanelProps) {
   if (!isOpen) return null;
 
@@ -132,7 +144,101 @@ export function SettingsPanel({
             </div>
           </div>
 
-          {/* Section 3: 歌词设置 */}
+          {/* Section 3: 画质 & 抗锯齿 */}
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+              </svg>
+              <span className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+                画质 & 抗锯齿
+              </span>
+            </div>
+
+            {/* Quality selector */}
+            <div className="mb-4">
+              <span className="text-[11px] text-white/60 block mb-2">渲染质量</span>
+              <div className="flex gap-2">
+                {(['low', 'medium', 'high'] as const).map((level) => (
+                  <button
+                    key={level}
+                    onClick={() => onQualityChange?.(userQuality === level ? null : level)}
+                    className="flex-1 text-[10px] uppercase tracking-[0.1em] py-2 rounded-sm border transition-all duration-200"
+                    style={{
+                      backgroundColor: (userQuality || null) === level || (!userQuality && level === 'medium') ? `${accentHex}20` : 'transparent',
+                      borderColor: (userQuality || null) === level || (!userQuality && level === 'medium') ? accentHex : 'rgba(255,255,255,0.08)',
+                      color: (userQuality || null) === level || (!userQuality && level === 'medium') ? accentHex : 'rgba(255,255,255,0.5)',
+                    }}
+                  >
+                    {level === 'low' ? '低' : level === 'medium' ? '中' : '高'}
+                  </button>
+                ))}
+              </div>
+              {!userQuality && (
+                <div className="text-[8px] text-white/20 tracking-[0.1em] uppercase mt-1.5 text-center">
+                  当前：自动检测
+                </div>
+              )}
+            </div>
+
+            {/* Antialias toggle */}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-white/60">抗锯齿 (AA)</span>
+              <div className="flex gap-1.5">
+                {[null, true, false].map((v) => {
+                  const active = userAntialias === v || (!userAntialias && v === null);
+                  return (
+                    <button
+                      key={String(v)}
+                      onClick={() => onAntialiasChange?.(v === null ? null : v)}
+                      className="text-[9px] uppercase tracking-[0.1em] px-2.5 py-1 rounded-sm border transition-all duration-200"
+                      style={{
+                        backgroundColor: active ? `${accentHex}20` : 'transparent',
+                        borderColor: active ? accentHex : 'rgba(255,255,255,0.08)',
+                        color: active ? accentHex : 'rgba(255,255,255,0.4)',
+                      }}
+                    >
+                      {v === null ? '自动' : v ? '开' : '关'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4: 无 UI 模式 */}
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <line x1="9" y1="21" x2="9" y2="9" />
+              </svg>
+              <span className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+                无 UI 模式
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-white/60">一键隐藏所有界面（含 Logo）</span>
+              <button
+                onClick={() => onUiHiddenChange?.(!uiHidden)}
+                className="text-[10px] uppercase tracking-[0.15em] px-3 py-1.5 rounded-sm border transition-all duration-200"
+                style={{
+                  backgroundColor: uiHidden ? `${accentHex}20` : 'transparent',
+                  borderColor: uiHidden ? accentHex : 'rgba(255,255,255,0.1)',
+                  color: uiHidden ? accentHex : 'rgba(255,255,255,0.45)',
+                }}
+              >
+                {uiHidden ? '已隐藏' : '隐藏全部'}
+              </button>
+            </div>
+            <div className="text-[9px] text-white/20 mt-2 flex items-center gap-1.5">
+              <kbd className="px-1.5 py-0.5 text-[8px] font-mono border border-white/10 rounded-sm">U</kbd>
+              <span>快捷键切换</span>
+            </div>
+          </div>
+
+          {/* Section 5: 歌词设置 */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
@@ -189,7 +295,7 @@ export function SettingsPanel({
             </div>
           </div>
 
-          {/* Section 4: 播放记录 */}
+          {/* Section 6: 播放记录 */}
           <div className="mb-2">
             <div className="flex items-center gap-2 mb-3">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">

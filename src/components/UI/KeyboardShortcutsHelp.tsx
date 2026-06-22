@@ -14,6 +14,7 @@ const SHORTCUTS = [
   { key: '↓', desc: '减小音量' },
   { key: 'F', desc: '全屏 / 退出全屏' },
   { key: 'M', desc: '静音 / 取消静音' },
+  { key: 'U', desc: '隐藏 / 显示所有 UI' },
   { key: 'H / ?', desc: '显示此帮助' },
 ];
 
