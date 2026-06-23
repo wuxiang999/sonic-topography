@@ -266,7 +266,7 @@ function neteaseApiPlugin() {
 
 export default defineConfig(() => {
   return {
-    base: "/music/",
+    base: "/",
     plugins: [react(), tailwindcss(), neteaseApiPlugin()],
     resolve: {
       alias: {
