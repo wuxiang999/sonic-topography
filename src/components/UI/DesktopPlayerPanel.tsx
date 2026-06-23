@@ -2,21 +2,10 @@ import { useRef, useState } from 'react';
 import { Play, Pause, Volume2, SkipForward, SkipBack, Palette, Shuffle, Repeat, ChevronDown, ChevronUp, Minimize2 } from 'lucide-react';
 import { engine } from '../../lib/AudioEngine';
 import { themes } from '../../lib/themes';
+import type { NeteaseSong, PlayMode } from '../../types';
 
 const PLACEHOLDER_COVER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>');
 const imgOnError = (e: React.SyntheticEvent<HTMLImageElement>) => { (e.target as HTMLImageElement).src = PLACEHOLDER_COVER; };
-
-interface NeteaseSong {
-  id: number;
-  name: string;
-  artist: string;
-  album: string;
-  duration: number;
-  fee: number;
-  picUrl?: string;
-}
-
-type PlayMode = 'sequence' | 'shuffle' | 'repeat-one';
 
 export function DesktopPlayerPanel({
   trackName, artistName, isCapturing, theme, onThemeChange, accentHex,
@@ -35,10 +24,12 @@ export function DesktopPlayerPanel({
   const seekingRef = useRef(false);
   const [collapsed, setCollapsed] = useState(false);
 
+  const resolvedThemeName = themes[theme]?.name || (theme === 'custom' ? '自定义主题' : theme);
+
   if (collapsed) {
     return (
       <div
-        className="fixed top-[40px] right-[40px] z-50 pointer-events-auto border border-white/10 rounded-sm overflow-hidden shadow-2xl backdrop-blur-[12px]"
+        className="fixed top-[40px] right-[40px] z-50 pointer-events-auto border border-white/[0.08] rounded-sm overflow-hidden shadow-2xl backdrop-blur-[20px]"
         style={{ background: 'rgba(8,12,18,0.85)' }}
       >
         <div className="flex items-center gap-2 px-3 py-2">
@@ -59,12 +50,13 @@ export function DesktopPlayerPanel({
 
   return (
     <div
-      className="absolute top-[40px] w-[400px] p-5 rounded-sm z-50 pointer-events-auto border border-white/10 overflow-hidden relative shadow-2xl backdrop-blur-[12px]"
+      className="absolute top-[40px] w-[400px] p-5 rounded-sm z-50 pointer-events-auto border border-white/[0.08] overflow-hidden relative shadow-2xl backdrop-blur-[20px]"
       style={{ top: 40, right: 40, position: 'fixed', background: 'rgba(8,12,18,0.82)' }}
     >
       {/* Top accent glow line */}
       <div className="absolute top-0 left-4 right-4 h-[1px] z-20 pointer-events-none"
         style={{ background: `linear-gradient(90deg, transparent, ${accentHex}66, transparent)` }} />
+      <div className="absolute top-[1px] left-0 right-0 h-[1px] z-10 pointer-events-none bg-white/[0.03]" />
       {coverUrl && (
         <div className="absolute inset-0 -z-10">
           <img src={coverUrl} alt="" className="w-full h-full object-cover opacity-25" onError={imgOnError} />
@@ -73,7 +65,7 @@ export function DesktopPlayerPanel({
       )}
 
       <div className="flex gap-5 mb-4">
-        <div className="w-[120px] h-[120px] rounded-[4px] overflow-hidden flex-shrink-0 shadow-lg ring-1 ring-white/10">
+        <div className="w-[120px] h-[120px] rounded-[4px] overflow-hidden flex-shrink-0 shadow-lg ring-1 ring-white/[0.06]">
           {coverUrl ? (
             <img src={coverUrl} alt="" className="w-full h-full object-cover" onError={imgOnError} />
           ) : (
@@ -105,8 +97,9 @@ export function DesktopPlayerPanel({
                 {showThemeBtn && (
                   <button
                     onClick={() => {
-                      const keys = ['auto', ...Object.keys(themes)];
-                      const nextIndex = (keys.indexOf(theme) + 1) % keys.length;
+                      const keys = Object.keys(themes);
+                      const currentIdx = keys.indexOf(theme);
+                      const nextIndex = currentIdx >= 0 ? (currentIdx + 1) % keys.length : 0;
                       onThemeChange(keys[nextIndex]);
                     }}
                     className="text-white/40 hover:text-white transition-colors"
@@ -119,7 +112,7 @@ export function DesktopPlayerPanel({
             </div>
             <div className="text-[12px] opacity-50 uppercase mt-1.5 tracking-wider">
               {isCapturing ? '系统音频录制' : '本地音频'}
-              <span className="ml-2 text-[10px]" style={{ color: accentHex }}>&bull; {theme === 'auto' ? '随歌自适应' : themes[theme]?.name}</span>
+              <span className="ml-2 text-[10px]" style={{ color: accentHex }}>&bull; {resolvedThemeName}</span>
             </div>
           </div>
         </div>
@@ -203,8 +196,12 @@ export function DesktopPlayerPanel({
                 engine.audioElement.volume = val;
                 setVolume(val);
               }}
-              className="w-20 h-1 accent-current cursor-pointer bg-white/20 appearance-none rounded-full"
-              style={{ accentColor: accentHex }}
+              className="range-thumb w-20 cursor-pointer"
+              style={{
+                background: `linear-gradient(to right, ${accentHex} ${volume * 100}%, rgba(255,255,255,0.06) ${volume * 100}%)`,
+                '--thumb': accentHex,
+                '--glow': `${accentHex}33`,
+              } as React.CSSProperties}
             />
             <Volume2
               size={14}

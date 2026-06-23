@@ -1,17 +1,46 @@
 // Suppress THREE.Clock deprecation warning (R3F uses it internally, not our code)
-const _warn = console.warn;
-console.warn = (...args) => {
-  if (args[0] && typeof args[0] === 'string' && args[0].includes('Clock: This module has been deprecated')) return;
-  _warn.apply(console, args);
+const _warn = console.warn.bind(console);
+console.warn = (...args: unknown[]) => {
+  if (typeof args[0] === 'string' && /^THREE\.Clock: This module has been deprecated/.test(args[0])) return;
+  _warn(...args);
 };
 
 import { Canvas } from '@react-three/fiber';
 import { UI } from './components/UI/UI';
-import { MapScene } from './components/AudioVisualizer/MapScene';
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { themes } from './lib/themes';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+
+const MapScene = lazy(() => import('./components/AudioVisualizer/MapScene'));
+import {
+  BUILT_IN_THEME_IDS,
+  CUSTOM_THEME_ID,
+  createCustomThemeColors,
+  readActiveCustomThemeStorage,
+  readActiveThemeStorage,
+  readCustomThemeStorage,
+  readThemeRotationStorage,
+  themes,
+  writeActiveCustomThemeStorage,
+  writeActiveThemeStorage,
+  writeCustomThemeStorage,
+  writeThemeRotationStorage,
+  type CustomThemeSettings,
+  type ThemeRotationSettings,
+} from './lib/themes';
+import { readGroundEqSettingsStorage, writeGroundEqSettingsStorage, type StoredGroundEqSettings } from './lib/groundEqSettings';
 import { engine } from './lib/AudioEngine';
 import { getDevicePerformance } from './lib/performance';
+import { DEFAULT_SCENE_SETTINGS, type SceneSettings } from './components/UI/SettingsPanel';
+import { SettingsProvider } from './store/SettingsContext';
+
+// ── Initial state helpers ─────────────────────────────────────
+
+function readInitialCustomThemeState() {
+  const presets = readCustomThemeStorage();
+  return {
+    presets,
+    activeId: readActiveCustomThemeStorage(presets),
+  };
+}
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(
@@ -40,33 +69,117 @@ function useRenderMode() {
 }
 
 export default function App() {
-  const [theme, setTheme] = useState('auto');
+  // ── Custom theme system state ──────────────────────────────
+  const [theme, setTheme] = useState(readActiveThemeStorage);
+  const [groundEqSettings, setGroundEqSettings] = useState<StoredGroundEqSettings>(readGroundEqSettingsStorage);
+  const [customThemeState, setCustomThemeState] = useState(readInitialCustomThemeState);
+  const customThemes = customThemeState.presets;
+  const activeCustomThemeId = customThemeState.activeId;
+  const activeCustomTheme = customThemes.find((preset) => preset.id === activeCustomThemeId) || customThemes[0];
+  const availableRotationThemeIds = [...BUILT_IN_THEME_IDS, ...customThemes.map((preset) => preset.id)];
+  const [themeRotation, setThemeRotation] = useState<ThemeRotationSettings>(() => readThemeRotationStorage(availableRotationThemeIds));
+  const resolvedTheme = theme === CUSTOM_THEME_ID
+    ? createCustomThemeColors(activeCustomTheme)
+    : (themes[theme] || themes['nocturnal']);
+  const sceneRotationSpeed = theme === CUSTOM_THEME_ID
+    ? (activeCustomTheme?.rotationSpeed ?? resolvedTheme.uRotationSpeed)
+    : resolvedTheme.uRotationSpeed;
+  const showPlayerPanel = theme === CUSTOM_THEME_ID
+    ? (activeCustomTheme?.showPlayerPanel ?? resolvedTheme.uShowPlayerPanel)
+    : resolvedTheme.uShowPlayerPanel;
+
+  // ── Scene settings (fog, band gains, etc.) ────────────────
+  const SCENE_SETTINGS_KEY = 'sonic-topography-scene-settings-v1';
+  function readSceneSettings(): SceneSettings {
+    try {
+      const raw = localStorage.getItem(SCENE_SETTINGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return { ...DEFAULT_SCENE_SETTINGS, ...parsed };
+      }
+    } catch {}
+    return { ...DEFAULT_SCENE_SETTINGS };
+  }
+  const [sceneSettings, setSceneSettings] = useState<SceneSettings>(readSceneSettings);
+  const handleSceneSettingsChange = (settings: SceneSettings) => {
+    setSceneSettings(settings);
+    try {
+      localStorage.setItem(SCENE_SETTINGS_KEY, JSON.stringify(settings));
+    } catch {}
+  };
+
+  // ── Other state ────────────────────────────────────────────
   const [currentCover, setCurrentCover] = useState('');
-  const [renderRecHidden, setRenderRecHidden] = useState(false);
   const [userQuality, setUserQuality] = useState<'low' | 'medium' | 'high' | null>(null);
   const [userAntialias, setUserAntialias] = useState<boolean | null>(null);
   const [uiHidden, setUiHidden] = useState(false);
-
-  // ── Session restore ─────────────────────────────────────────
-  useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem('sonic-session');
-      if (saved) {
-        const data = JSON.parse(saved);
-        if (data.theme) setTheme(data.theme);
-      }
-    } catch {}
-  }, []);
-
-  // Save session on state changes
-  useEffect(() => {
-    try {
-      sessionStorage.setItem('sonic-session', JSON.stringify({ theme }));
-    } catch {}
-  }, [theme]);
-
   const isMobile = useIsMobile();
   const { renderMode, songId } = useRenderMode();
+
+  // ── Theme management ───────────────────────────────────────
+
+  const activateThemeId = (themeId: string) => {
+    if (BUILT_IN_THEME_IDS.includes(themeId)) {
+      setTheme(themeId);
+      writeActiveThemeStorage(themeId);
+      return;
+    }
+
+    if (customThemes.some((preset) => preset.id === themeId)) {
+      setCustomThemeState((prev) => ({ ...prev, activeId: themeId }));
+      writeActiveCustomThemeStorage(themeId);
+      setTheme(CUSTOM_THEME_ID);
+      writeActiveThemeStorage(CUSTOM_THEME_ID);
+    }
+  };
+
+  const updateCustomThemes = (settings: CustomThemeSettings[], activeId = activeCustomThemeId) => {
+    setCustomThemeState({ presets: settings, activeId });
+    writeCustomThemeStorage(settings);
+    writeActiveCustomThemeStorage(activeId);
+  };
+
+  const updateThemeRotation = (settings: ThemeRotationSettings) => {
+    setThemeRotation(settings);
+    writeThemeRotationStorage(settings, availableRotationThemeIds);
+  };
+
+  const updateGroundEqSettings = (settings: StoredGroundEqSettings) => {
+    setGroundEqSettings(settings);
+    writeGroundEqSettingsStorage(settings);
+  };
+
+  // ── Theme rotation timer ───────────────────────────────────
+  const { enabled: rotationEnabled, intervalSeconds: rotationInterval, themeIds: rotationThemeIds } = themeRotation;
+  useEffect(() => {
+    if (!rotationEnabled || rotationThemeIds.length < 2) return;
+
+    const timer = window.setInterval(() => {
+      const currentThemeId = theme === CUSTOM_THEME_ID ? activeCustomThemeId : theme;
+      const currentIndex = rotationThemeIds.indexOf(currentThemeId);
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % rotationThemeIds.length : 0;
+      activateThemeId(rotationThemeIds[nextIndex]);
+    }, rotationInterval * 1000);
+
+    return () => window.clearInterval(timer);
+  }, [rotationEnabled, rotationInterval, rotationThemeIds, theme, activeCustomThemeId, customThemes]);
+
+  // Update available rotation IDs when custom themes change
+  useEffect(() => {
+    const normalized = readThemeRotationStorage(availableRotationThemeIds);
+    setThemeRotation((current) => {
+      const nextThemeIds = current.themeIds.filter((id) => availableRotationThemeIds.includes(id));
+      const next = { ...current, themeIds: nextThemeIds.length ? nextThemeIds : normalized.themeIds };
+      writeThemeRotationStorage(next, availableRotationThemeIds);
+      return next;
+    });
+  }, [customThemes.length]);
+
+  // ── Load trigger settings from storage on mount ────────────
+  useEffect(() => {
+    engine.loadTriggerSettingsFromStorage();
+  }, []);
+
   // ── DJ mode auto-detection ──────────────────────────────
   const [isDJMode, setIsDJMode] = useState(false);
   const djDetectionRef = useRef<number[]>([]);
@@ -77,7 +190,6 @@ export default function App() {
       const energy = data.energy || 0;
       const density = data.density || 0;
       const sharpness = data.sharpness || 0;
-      const now = performance.now();
 
       djDetectionRef.current.push(energy);
       if (djDetectionRef.current.length > 60) djDetectionRef.current.shift();
@@ -85,21 +197,22 @@ export default function App() {
       if (djDetectionRef.current.length >= 30) {
         const avg = djDetectionRef.current.reduce((a, b) => a + b, 0) / djDetectionRef.current.length;
         const variance = djDetectionRef.current.reduce((s, v) => s + (v - avg) ** 2, 0) / djDetectionRef.current.length;
-        const rhythmic = variance < 0.008 && avg > 0.35; // steady high energy = DJ/electronic
+        const rhythmic = variance < 0.008 && avg > 0.35;
         const intense = energy > 0.55 && density > 0.55 && sharpness > 0.4;
         setIsDJMode(rhythmic || intense);
       }
     }, 500);
     return () => clearInterval(interval);
   }, [renderMode]);
-  // Read render duration from URL or default to 30s
+
+  // ── Render mode duration ──────────────────────────────────
   const renderDuration = useRef(
     typeof window !== 'undefined'
       ? Number(new URLSearchParams(window.location.search).get('dur')) || 30
       : 30
   );
 
-  // ===== Render Mode (recording removed from local UI) =====
+  // ===== Render Mode =====
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).__renderMode = renderMode;
@@ -109,12 +222,12 @@ export default function App() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
-  // Expose engine & state for puppeteer diagnostics
+  // Expose engine & state for puppeteer diagnostics (DEV only)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && import.meta.env.DEV) {
       (window as any).__engine = engine;
       const interval = setInterval(() => {
-        (window as any).__audioCtxState = engine.audioCtx?.state;
+        (window as any).__audioCtxState = (engine as any).audioCtx?.state;
         (window as any).__audioPaused = engine.audioElement?.paused;
         (window as any).__audioCurrentTime = engine.audioElement?.currentTime;
       }, 2000);
@@ -130,8 +243,6 @@ export default function App() {
     const startRender = async () => {
       try {
         console.log('Render mode: starting...');
-
-        // Wait for Three.js canvas to initialize properly
         await new Promise(r => setTimeout(r, 3000));
 
         const canvas = document.querySelector('canvas');
@@ -141,20 +252,12 @@ export default function App() {
           return;
         }
 
-        // ===== Render Mode Audio Pipeline =====
-        // Bypass HTMLAudioElement + createMediaElementSource entirely.
-        // In headless Chrome/ SwiftShader, the MediaElementSourceNode
-        // does not deliver data to the AnalyserNode (all zeros).
-        // Instead, use fetch + decodeAudioData + BufferSource.
-
         console.log('Render mode: fetching audio file...');
         (window as any).__recorderState = 'fetching-audio';
 
-        // Create fresh AudioContext
         const actx = new (window.AudioContext || (window as any).webkitAudioContext)();
         console.log('Render mode: AudioContext created, state=' + actx.state);
 
-        // Fetch the MP3
         const audioResp = await fetch('/music/static-audio/grey-track.mp3');
         if (!audioResp.ok) {
           console.error('Render mode: audio fetch failed: ' + audioResp.status);
@@ -164,50 +267,31 @@ export default function App() {
         const audioBuf = await audioResp.arrayBuffer();
         console.log('Render mode: audio fetched, ' + audioBuf.byteLength + ' bytes');
 
-        // Decode
         const decodedAudio = await actx.decodeAudioData(audioBuf);
         console.log('Render mode: audio decoded, duration=' + decodedAudio.duration + 's channels=' + decodedAudio.numberOfChannels);
 
-        // Set up analyser (reuse engine's analyser if possible for MapScene compatibility)
         const analyserNode = actx.createAnalyser();
         analyserNode.fftSize = 1024;
         analyserNode.smoothingTimeConstant = 0.8;
 
-        // Create buffer source and connect
         const bufferSource = actx.createBufferSource();
         bufferSource.buffer = decodedAudio;
         bufferSource.connect(analyserNode);
         analyserNode.connect(actx.destination);
         bufferSource.start(0);
 
-        // Patch engine's analyser so MapScene.getAudioData() reads from this one
-        (engine as any).audioCtx = actx;
-        (engine as any).analyser = analyserNode;
-        (engine as any).isPlaying = true;
-        // Give the analyser a proper data array
-        (engine as any).dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+        engine.setRenderModeAudio(actx, analyserNode);
 
         console.log('Render mode: audio playing via BufferSource');
 
-        // Listen for audio end to stop recording
-        const songDurationMs = decodedAudio.duration * 1000;
-        setTimeout(() => {
-          console.log(`Render mode: song would end at ${songDurationMs}ms, waiting for configured duration`);
-        }, songDurationMs);
-
-        // Start canvas recording
-        console.log('Render mode: starting canvas recording...');
-
         (window as any).__recorderState = 'setup';
 
-        // Check canvas is in DOM (no getContext call - it can disconnect Three.js)
         if (!document.body.contains(canvas)) {
           console.error('Render mode: canvas not in DOM');
           return;
         }
         console.log('Render mode: canvas in DOM, capturing stream...');
 
-        // captureStream at moderate fps (headless Chrome can't do 25 reliably with SwiftShader)
         const stream = canvas.captureStream(12);
         const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
           ? 'video/webm;codecs=vp9'
@@ -215,7 +299,7 @@ export default function App() {
 
         const recorder = new MediaRecorder(stream, {
           mimeType,
-          videoBitsPerSecond: 800000, // 800kbps for decent quality at 12fps
+          videoBitsPerSecond: 800000,
         });
         recorderRef.current = recorder;
         chunksRef.current = [];
@@ -233,7 +317,6 @@ export default function App() {
           const blob = new Blob(chunksRef.current, { type: 'video/webm' });
           console.log(`Render mode: recording complete, ${blob.size} bytes`);
 
-          // Convert blob to base64 for puppeteer to read
           const reader = new FileReader();
           reader.onload = function() {
             (window as any).__renderResult = reader.result;
@@ -247,7 +330,6 @@ export default function App() {
         recorder.start(5000);
         (window as any).__recorderState = 'started';
 
-        // BufferSource ended -> stop recording (for full song renders)
         bufferSource.onended = () => {
           console.log('Render mode: song ended, stopping recording');
           setTimeout(() => {
@@ -260,7 +342,6 @@ export default function App() {
         (window as any).__renderRunning = true;
         console.log('Render mode: running...');
 
-        // Stop recording after configured duration (takes priority for shorter clips)
         const durMs = renderDuration.current * 1000;
         setTimeout(() => {
           if (bufferSource && (bufferSource as any).playbackState !== 'finished') {
@@ -289,10 +370,11 @@ export default function App() {
     };
   }, [renderMode, songId]);
 
-  // ── Keyboard shortcuts ──────────────────────────────────────
+  // ── Keyboard shortcuts ────────────────────────────────────
+  const [renderRecHidden, setRenderRecHidden] = useState(false);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      // Don't intercept if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       switch (e.code) {
@@ -336,22 +418,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
-  const bgDark = theme !== 'auto'
-    ? `#${themes[theme]?.uBaseColor1.getHexString()}`
-    : '#0a0a12';
+  // ── Background color from resolved theme ──────────────────
+  const bgDark = `#${resolvedTheme.uBaseColor1.getHexString()}`;
 
-  // Auto-detect device performance
+  // ── Performance auto-detection ─────────────────────────────
   const perf = getDevicePerformance();
-
-  // User overrides for quality / antialias (null = use auto-detect)
   const effectiveQuality = userQuality || perf.perfLevel;
   const effectiveAntialias = userAntialias !== null ? userAntialias : perf.antialias;
 
-  // dpr/gl by quality level
   const qualityDpr: Record<string, [number, number]> = { low: [0.5, 1], medium: [0.75, 1.5], high: [1, 2] };
-  const qualityGrid: Record<string, number> = { low: 50, medium: 80, high: 100 };
-
-  // Render mode: forced quality, normal mode: user override (or auto-detect)
   const canvasDpr = renderMode ? [1, 1] : qualityDpr[effectiveQuality];
   const canvasPerf = renderMode ? { min: 1 } : { min: 0.3 };
   const canvasGl = renderMode
@@ -364,18 +439,27 @@ export default function App() {
       style={{ backgroundColor: bgDark }}
     >
       {!renderMode && (
-        <UI
-          theme={theme}
-          onThemeChange={setTheme}
-          isMobile={isMobile}
-          onCoverChange={setCurrentCover}
-          uiHidden={uiHidden}
+        <SettingsProvider
+          initialTheme={theme}
+          initialCustomThemes={customThemes}
+          initialActiveCustomThemeId={activeCustomThemeId}
+          initialThemeRotation={themeRotation}
+          initialGroundEqSettings={groundEqSettings}
+          initialSceneSettings={sceneSettings}
+          initialUiHidden={uiHidden}
+          initialUserQuality={userQuality}
+          initialUserAntialias={userAntialias}
+          onThemeChange={activateThemeId}
+          onCustomThemesChange={updateCustomThemes}
+          onThemeRotationChange={updateThemeRotation}
+          onGroundEqSettingsChange={updateGroundEqSettings}
+          onSceneSettingsChange={handleSceneSettingsChange}
           onUiHiddenChange={setUiHidden}
-          userQuality={userQuality}
           onQualityChange={setUserQuality}
-          userAntialias={userAntialias}
           onAntialiasChange={setUserAntialias}
-        />
+        >
+          <UI isMobile={isMobile} onCoverChange={setCurrentCover} />
+        </SettingsProvider>
       )}
       <div className={renderMode ? 'fixed inset-0' : `absolute inset-0 ${uiHidden ? 'z-[1]' : 'z-0'}`}>
         <Canvas
@@ -384,7 +468,17 @@ export default function App() {
           performance={canvasPerf}
           gl={canvasGl}
         >
-          <MapScene theme={theme} isMobile={isMobile} perfLevel={effectiveQuality} coverUrl={currentCover} isDJMode={isDJMode} />
+          <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+            <MapScene
+              themeColors={resolvedTheme}
+              groundEqSettings={groundEqSettings}
+              rotationSpeed={sceneRotationSpeed}
+              sceneSettings={sceneSettings}
+              isMobile={isMobile}
+              perfLevel={effectiveQuality}
+              isDJMode={isDJMode}
+            />
+          </Suspense>
         </Canvas>
       </div>
       {renderMode && !renderRecHidden && (
@@ -405,7 +499,6 @@ export default function App() {
           ● REC
         </div>
       )}
-
     </div>
   );
 }

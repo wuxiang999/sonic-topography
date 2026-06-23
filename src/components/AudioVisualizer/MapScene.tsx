@@ -4,50 +4,13 @@ import * as THREE from 'three';
 import { useRef, useMemo, useState, useLayoutEffect, useEffect } from 'react';
 import { MapShaderMaterial } from './CustomShaderMaterial';
 import { engine } from '../../lib/AudioEngine';
-import { themes } from '../../lib/themes';
+import { applyGroundEqValue } from '../../lib/groundEqSettings';
+import type { ThemeColors } from '../../lib/themes';
+import type { StoredGroundEqSettings } from '../../lib/groundEqSettings';
+import type { SceneSettings } from '../../components/UI/SettingsPanel';
 
 // Reusable white color for meteor lerp (avoids per-frame allocation)
 const _WHITE = new THREE.Color(0xffffff);
-
-// ─── Audio-based theme auto-selection ───────────────────────────────
-// Maps real-time audio features to the best-fitting visual theme.
-// Each theme has an "ideal" mood vector; we find the closest match.
-function computeBestTheme(data: ReturnType<typeof engine.getAudioData>): string {
-  const warmth = data.warmth ?? 0.5;
-  const brightness = data.brightness ?? 0.5;
-  const energy = data.energy ?? 0.5;
-  const density = data.density ?? 0.5;
-  const centroid = (data.spectralCentroid ?? 256) / 512;
-
-  const currentMood = [warmth, brightness, energy, density, centroid];
-
-  // Theme mood profiles: [warmth, brightness, energy, density, centroid]
-  const themeMoods: Record<string, number[]> = {
-    'nocturnal':          [0.70, 0.20, 0.25, 0.30, 0.30], // warm, calm, atmospheric
-    'neon-tokyo':         [0.20, 0.80, 0.75, 0.70, 0.70], // cool, bright, energetic
-    'cyber-forest':       [0.50, 0.50, 0.50, 0.50, 0.50], // balanced, organic
-    'minimal-monochrome': [0.20, 0.30, 0.15, 0.20, 0.35], // cool, sparse, minimal
-    'dj-club':            [0.15, 0.90, 0.90, 0.85, 0.80], // cool-bright, max energy, dense, bright centroid
-  };
-
-  const weights = [0.30, 0.25, 0.20, 0.15, 0.10]; // feature importance
-
-  let bestId = 'nocturnal';
-  let bestScore = -Infinity;
-
-  for (const [id, ideal] of Object.entries(themeMoods)) {
-    let score = 0;
-    for (let i = 0; i < 5; i++) {
-      score += (1 - Math.abs(ideal[i] - currentMood[i])) * weights[i];
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      bestId = id;
-    }
-  }
-
-  return bestId;
-}
 
 // ─── Dynamic scene parameters from audio ────────────────────────────
 function getSceneParams(data: ReturnType<typeof engine.getAudioData>) {
@@ -71,25 +34,31 @@ function getPerfValue<T>(perfLevel: PerfLevel, values: [T, T, T]): T {
 }
 
 export function MapScene({
-  theme = 'auto',
+  themeColors,
+  groundEqSettings,
+  rotationSpeed = 0.5,
+  sceneSettings,
   isMobile = false,
   perfLevel = 'medium',
   isDJMode = false,
 }: {
-  theme?: string;
+  themeColors: ThemeColors;
+  groundEqSettings: StoredGroundEqSettings;
+  rotationSpeed?: number;
+  sceneSettings?: SceneSettings;
   isMobile?: boolean;
   perfLevel?: PerfLevel;
   isDJMode?: boolean;
 }) {
-  const controlsRef = useRef<OrbitControls>(null!);
-  // Timer replaces deprecated THREE.Clock
+  const controlsRef = useRef<OrbitControls | null>(null);
   const timer = useMemo(() => new THREE.Timer(), []);
   const timeRef = useRef(0);
+  const idleFramesRef = useRef(0);
 
-  const gridSize = getPerfValue(perfLevel, [50, 80, 100]);
+  const gridSize = sceneSettings?.gridSize ?? getPerfValue(perfLevel, [50, 80, 100]);
   const spacing = isMobile ? 1.1 : 1.05;
 
-  // ── Grid chunking for per-chunk frustum culling ──────────
+  // ── Grid chunking ──────────────────────────────────────────
   const CHUNK_SIZE = isMobile ? 24 : 16;
   const numChunksX = Math.ceil(gridSize / CHUNK_SIZE);
   const numChunksZ = Math.ceil(gridSize / CHUNK_SIZE);
@@ -106,11 +75,9 @@ export function MapScene({
     return chunks;
   }, [gridSize]);
 
-  // Shared geometry & material for all grid chunks
   const boxGeo = useMemo(() => new THREE.BoxGeometry(isMobile ? 0.85 : 0.9, 1, isMobile ? 0.85 : 0.9), [isMobile]);
   const sharedMat = useMemo(() => { const m = new MapShaderMaterial(); m.transparent = true; return m; }, []);
 
-  // Refs for each chunk — initialize to correct array length
   const meshRefs = useRef<(THREE.InstancedMesh | null)[]>([]);
   if (meshRefs.current.length !== totalChunks) {
     meshRefs.current = new Array(totalChunks).fill(null);
@@ -136,7 +103,6 @@ export function MapScene({
       }
       mesh.instanceMatrix.needsUpdate = true;
 
-      // Per-chunk bounding sphere for accurate frustum culling
       const centerX = (chunk.sx + chunk.w / 2) * spacing - offset;
       const centerZ = (chunk.sz + chunk.h / 2) * spacing - offset;
       const radius = Math.sqrt((chunk.w * spacing / 2) ** 2 + (chunk.h * spacing / 2) ** 2);
@@ -144,10 +110,7 @@ export function MapScene({
     });
   }, [gridChunks, spacing]);
 
-  // ── Auto-theme state (only used when theme === 'auto') ──────────
-  const autoThemeRef = useRef('nocturnal');
-
-  // ── Ripples logic ──────────────────────────────────────────────
+  // ── Ripples ──────────────────────────────────────────────
   const MAX_RIPPLES = getPerfValue(perfLevel, [3, 6, 10]);
   const ripplesRef = useRef(new Array(MAX_RIPPLES).fill(null).map(() => ({
     pos: new THREE.Vector2(),
@@ -180,11 +143,11 @@ export function MapScene({
 
   const fogRef = useRef<THREE.Fog>(null);
 
-  // ── Frame skipping on mobile ───────────────────────────────────
+  // ── Frame skipping on mobile ──────────────────────────────
   const frameCount = useRef(0);
   const FRAME_SKIP = getPerfValue(perfLevel, [2, 1, 0]);
 
-  // ── Meteors ────────────────────────────────────────────────────
+  // ── Meteors ───────────────────────────────────────────────
   const MAX_METEORS = getPerfValue(perfLevel, [3, 5, 8]);
   const meteorMeshRef = useRef<THREE.InstancedMesh>(null);
   const meteorMatRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -228,14 +191,8 @@ export function MapScene({
     speed: 0, strength: 0,
   })));
   const meteorIndex = useRef(0);
-  const lastMeteorSpawnTime = useRef(-Infinity);
 
   const addMeteor = (strength: number) => {
-    const now = timeRef.current;
-    const cooldownSeconds = engine.meteorTrigger.cooldown / 60;
-    if (now - lastMeteorSpawnTime.current < cooldownSeconds) return;
-    lastMeteorSpawnTime.current = now;
-
     const idx = meteorIndex.current;
     const angle = Math.random() * Math.PI * 2;
     const dist = Math.random() * (isMobile ? 15 : 25);
@@ -250,7 +207,7 @@ export function MapScene({
     meteorIndex.current = (idx + 1) % MAX_METEORS;
   };
 
-  // ── Beat detection wiring ──────────────────────────────────────
+  // ── Beat detection wiring ─────────────────────────────────
   useEffect(() => {
     engine.onFreqTrigger = (strength, mode, action) => {
       if (action === 'Meteor') {
@@ -266,9 +223,43 @@ export function MapScene({
         }
       }
     };
-  }, [theme, isMobile]);
+  }, [isMobile]);
 
-  // ── Main render loop ───────────────────────────────────────────
+  // ── Initialize theme colors on mount ──────────────────────
+  // This ensures the shader starts with the correct theme even before the first frame
+  useEffect(() => {
+    const mat = sharedMat;
+    mat.uBaseColor1.copy(themeColors.uBaseColor1);
+    mat.uBaseColor2.copy(themeColors.uBaseColor2);
+    mat.uCoolCore.copy(themeColors.uCoolCore);
+    mat.uCoolEdge.copy(themeColors.uCoolEdge);
+    mat.uWarmCore.copy(themeColors.uWarmCore);
+    mat.uWarmEdge.copy(themeColors.uWarmEdge);
+    mat.uRippleColor.copy(themeColors.uRippleColor);
+    mat.uGlowIntensity = themeColors.uGlowIntensity;
+
+    if (fogRef.current) {
+      fogRef.current.color.copy(themeColors.uBaseColor1);
+    }
+  }, []); // only on mount
+
+  // ── Use scene settings for dynamic parameters ─────────────
+  const effectiveFogNear = sceneSettings?.fogNear ?? (isMobile ? 20 : 30);
+  const effectiveFogFar = sceneSettings?.fogFar ?? (isMobile ? 55 : 95);
+  const fogColorHex = sceneSettings?.fogColor ?? `#${themeColors.uBaseColor1.getHexString()}`;
+  const bassGain = sceneSettings?.bassGain ?? 1.0;
+  const midGain = sceneSettings?.midGain ?? 1.0;
+  const trebleGain = sceneSettings?.trebleGain ?? 1.0;
+  const subBassGain = sceneSettings?.subBassGain ?? 1.0;
+  const lowMidGain = sceneSettings?.lowMidGain ?? 1.0;
+  const highMidGain = sceneSettings?.highMidGain ?? 1.0;
+  const presenceGain = sceneSettings?.presenceGain ?? 1.0;
+  const brillianceGain = sceneSettings?.brillianceGain ?? 1.0;
+  const airGain = sceneSettings?.airGain ?? 1.0;
+  const effectGlowIntensity = sceneSettings?.glowIntensity ?? 1.0;
+  const effectRotationSpeed = sceneSettings?.rotationSpeed ?? rotationSpeed;
+
+  // ── Main render loop ──────────────────────────────────────
   useFrame((state, delta) => {
     if (!sharedMat) return;
 
@@ -281,74 +272,109 @@ export function MapScene({
     const mat = sharedMat;
     const data = engine.getAudioData();
 
-    // ── Resolve theme ──────────────────────────────────────────
-    const manualOverride = theme !== 'auto';
-    if (!manualOverride) {
-      autoThemeRef.current = computeBestTheme(data);
-    }
-    const activeTheme = manualOverride ? theme : autoThemeRef.current;
-    const t = themes[activeTheme] || themes['nocturnal'];
-
-    // ── Dynamic scene parameters ────────────────────────────────
-    const params = getSceneParams(data);
-    // DJ mode: override with club-optimized values
-    if (isDJMode) {
-      params.autoRotateSpeed = Math.max(params.autoRotateSpeed, 0.35);
-      params.meteorCooldown = Math.min(params.meteorCooldown, 150);
-      params.glowBoost = Math.max(params.glowBoost, 1.3);
+    // ── Idle frame detection ──────────────────────────────
+    const isAudioIdle = data.energy < 0.005 && !engine.isPlaying && !engine.isCapturing;
+    if (isAudioIdle) {
+      idleFramesRef.current++;
+    } else {
+      idleFramesRef.current = 0;
     }
 
-    // Update engine meteor trigger cooldown (dynamic)
-    engine.meteorTrigger.cooldown = params.meteorCooldown;
-
-    // Update OrbitControls rotation speed (dynamic)
-    if (controlsRef.current) {
-      controlsRef.current.autoRotateSpeed = params.autoRotateSpeed;
-    }
-
-    // ── Smooth theme colour transition ─────────────────────────
+    const isActive = idleFramesRef.current <= 10;
+    let glowBoost = 1.0;
     const lerpSpeed = 3.0 * delta;
 
-    // Glow = theme baseline × audio boost
-    const targetGlow = t.uGlowIntensity * params.glowBoost;
+    if (isActive) {
+      // ── Active audio: full EQ processing ──
+      const curve = groundEqSettings.curve;
 
-    mat.uBaseColor1.lerp(t.uBaseColor1, lerpSpeed);
-    mat.uBaseColor2.lerp(t.uBaseColor2, lerpSpeed);
-    mat.uCoolCore.lerp(t.uCoolCore, lerpSpeed);
-    mat.uCoolEdge.lerp(t.uCoolEdge, lerpSpeed);
-    mat.uWarmCore.lerp(t.uWarmCore, lerpSpeed);
-    mat.uWarmEdge.lerp(t.uWarmEdge, lerpSpeed);
-    mat.uRippleColor.lerp(t.uRippleColor, lerpSpeed);
+      const eqBass = applyGroundEqValue(data.bass, curve, 0.1) * bassGain;
+      const eqMid = applyGroundEqValue(data.mid, curve, 0.45) * midGain;
+      const eqTreble = applyGroundEqValue(data.treble, curve, 0.8) * trebleGain;
+      const eqEnergy = applyGroundEqValue(data.energy, curve, 0.5) * Math.max(bassGain, midGain, trebleGain);
+      const eqSubBass = applyGroundEqValue(data.subBass ?? 0, curve, 0.05) * subBassGain;
+      const eqLowMid = applyGroundEqValue(data.lowMid ?? 0, curve, 0.25) * lowMidGain;
+      const eqHighMid = applyGroundEqValue(data.highMid ?? 0, curve, 0.6) * highMidGain;
+      const eqPresence = applyGroundEqValue(data.presence ?? 0, curve, 0.85) * presenceGain;
+      const eqBrilliance = applyGroundEqValue(data.brilliance ?? 0, curve, 0.95) * brillianceGain;
+
+      const params = getSceneParams(data);
+      if (isDJMode) {
+        params.autoRotateSpeed = Math.max(params.autoRotateSpeed, 0.35);
+        params.meteorCooldown = Math.min(params.meteorCooldown, 150);
+        params.glowBoost = Math.max(params.glowBoost, 1.3);
+      }
+
+      glowBoost = params.glowBoost;
+      engine.meteorTrigger.cooldown = params.meteorCooldown;
+
+      if (controlsRef.current) {
+        controlsRef.current.autoRotateSpeed = effectRotationSpeed * (1.0 + params.autoRotateSpeed * 0.5);
+      }
+
+      mat.uBass = eqBass;
+      mat.uMid = eqMid;
+      mat.uTreble = eqTreble;
+      mat.uEnergy = eqEnergy;
+
+      if (!isMobile) {
+        mat.uSubBass = eqSubBass;
+        mat.uLowMid = eqLowMid;
+        mat.uHighMid = eqHighMid;
+        mat.uPresence = eqPresence;
+        mat.uBrilliance = eqBrilliance;
+        mat.uAir = data.air ?? 0;
+        mat.uWarmth = data.warmth ?? 0.5;
+        mat.uBrightness = data.brightness ?? 0.5;
+        mat.uSharpness = data.sharpness ?? 0;
+        mat.uSmoothness = data.smoothness ?? 0.5;
+        mat.uDensity = data.density ?? 0;
+        mat.uSpectralCentroid = data.spectralCentroid ?? 0.5;
+      }
+    } else {
+      // ── Idle: smooth decay of audio-driven values ──
+      const decay = Math.max(0, 1.0 - (idleFramesRef.current - 10) * 0.008);
+      mat.uBass *= decay;
+      mat.uMid *= decay;
+      mat.uTreble *= decay;
+      mat.uEnergy *= decay;
+      if (!isMobile) {
+        mat.uSubBass *= decay;
+        mat.uLowMid *= decay;
+        mat.uHighMid *= decay;
+        mat.uPresence *= decay;
+        mat.uBrilliance *= decay;
+        mat.uAir *= decay;
+        mat.uSharpness *= decay;
+        mat.uDensity *= decay;
+        mat.uWarmth = THREE.MathUtils.lerp(mat.uWarmth, 0.5, 0.02);
+        mat.uBrightness = THREE.MathUtils.lerp(mat.uBrightness, 0.5, 0.02);
+        mat.uSmoothness = THREE.MathUtils.lerp(mat.uSmoothness, 0.5, 0.02);
+        mat.uSpectralCentroid = THREE.MathUtils.lerp(mat.uSpectralCentroid, 0.5, 0.02);
+      }
+    }
+
+    // ── Theme color transition (always) ──
+    const targetGlow = themeColors.uGlowIntensity * glowBoost * effectGlowIntensity;
+
+    mat.uBaseColor1.lerp(themeColors.uBaseColor1, lerpSpeed);
+    mat.uBaseColor2.lerp(themeColors.uBaseColor2, lerpSpeed);
+    mat.uCoolCore.lerp(themeColors.uCoolCore, lerpSpeed);
+    mat.uCoolEdge.lerp(themeColors.uCoolEdge, lerpSpeed);
+    mat.uWarmCore.lerp(themeColors.uWarmCore, lerpSpeed);
+    mat.uWarmEdge.lerp(themeColors.uWarmEdge, lerpSpeed);
+    mat.uRippleColor.lerp(themeColors.uRippleColor, lerpSpeed);
     mat.uGlowIntensity = THREE.MathUtils.lerp(mat.uGlowIntensity, targetGlow, lerpSpeed);
 
-    // Skip fog color transition on mobile (saves lerp per frame, barely noticeable)
     if (fogRef.current && !isMobile) {
-      fogRef.current.color.lerp(t.uBaseColor1, lerpSpeed);
+      fogRef.current.color.lerp(themeColors.uBaseColor1, lerpSpeed);
     }
+
     timer.update();
     mat.uTime = timer.getElapsed();
     timeRef.current = timer.getElapsed();
-    mat.uBass = data.bass;
-    mat.uMid = data.mid;
-    mat.uTreble = data.treble;
-    mat.uEnergy = data.energy;
 
-    if (!isMobile) {
-      mat.uSubBass = data.subBass;
-      mat.uLowMid = data.lowMid;
-      mat.uHighMid = data.highMid;
-      mat.uPresence = data.presence;
-      mat.uBrilliance = data.brilliance;
-      mat.uAir = data.air;
-      mat.uWarmth = data.warmth;
-      mat.uBrightness = data.brightness;
-      mat.uSharpness = data.sharpness;
-      mat.uSmoothness = data.smoothness;
-      mat.uDensity = data.density;
-      mat.uSpectralCentroid = data.spectralCentroid;
-    }
-
-    // ── Ripples ────────────────────────────────────────────────
+    // ── Ripples ─────────────────────────────────────────────
     if (ripplesDirty.current) {
       const padded = paddedRipplesRef.current;
       const active = ripplesRef.current;
@@ -364,10 +390,10 @@ export function MapScene({
       ripplesDirty.current = false;
     }
 
-    // ── Meteors ────────────────────────────────────────────────
+    // ── Meteors ─────────────────────────────────────────────
     if (meteorMeshRef.current) {
       if (meteorMatRef.current) {
-        meteorTargetColorRef.current.copy(t.uWarmCore).lerp(_WHITE, 0.7);
+        meteorTargetColorRef.current.copy(themeColors.uWarmCore).lerp(_WHITE, 0.7);
         meteorMatRef.current.color.lerp(meteorTargetColorRef.current, lerpSpeed);
       }
 
@@ -379,14 +405,13 @@ export function MapScene({
           dummyMatrix.compose(dummyPosition, dummyRotation, dummyScale);
           meteorMeshRef.current.setMatrixAt(i, dummyMatrix);
         } else {
-          // ── Frustum culling: hide if behind camera or too far ──
           const mpx = m.x;
           const mpz = m.z;
           const camPos = state.camera.position;
           const dx = mpx - camPos.x;
           const dz = mpz - camPos.z;
           const distToCam = Math.sqrt(dx * dx + dz * dz);
-          
+
           if (distToCam > 90 || (m.y > 5 && dx * state.camera.matrixWorld.elements[8] + dz * state.camera.matrixWorld.elements[10] > 5)) {
             dummyPosition.set(mpx, m.y, mpz);
             dummyScale.set(0, 0, 0);
@@ -401,7 +426,7 @@ export function MapScene({
             }
             continue;
           }
-          
+
           m.y -= m.speed * 60 * delta;
           if (m.y <= 0) {
             m.active = false;
@@ -422,7 +447,7 @@ export function MapScene({
       meteorMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
-    // ── Particles ───────────────────────────────────────────────
+    // ── Particles ───────────────────────────────────────────
     if (particleMeshRef.current) {
       if (particleMatRef.current) {
         particleMatRef.current.color.copy(
@@ -459,7 +484,7 @@ export function MapScene({
     }
   });
 
-  // ── Interaction ──────────────────────────────────────────────────
+  // ── Interaction ──────────────────────────────────────────
   const [pressTime, setPressTime] = useState(0);
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
@@ -474,34 +499,22 @@ export function MapScene({
     addRipple(e.point.x, e.point.z, strength);
   };
 
-  // ── JSX ──────────────────────────────────────────────────────────
-  // For initial render just use 'nocturnal'; the useFrame will adjust immediately
-  const initialThemeKey = theme !== 'auto' ? theme : 'nocturnal';
-  const initialT = themes[initialThemeKey] || themes['nocturnal'];
-
+  // ── JSX ──────────────────────────────────────────────────
   return (
     <>
       <fog
         ref={fogRef}
         attach="fog"
-        args={[`#${initialT.uBaseColor1.getHexString()}`, isMobile ? 20 : 30, isMobile ? 55 : 95]}
+        args={[fogColorHex, effectiveFogNear, effectiveFogFar]}
       />
       <ambientLight intensity={isMobile ? 0.3 : 0.5} />
       <directionalLight position={[10, 20, 10]} intensity={isMobile ? 0.6 : 1} />
 
-      {/*
-        Culling strategy:
-        - Grid: Split into 16x16-column chunks, each with own InstancedMesh +
-          frustumCulled={true} + tight bounding sphere. Three.js culls entire
-          chunks outside the view frustum — draw calls drop ~75% when zoomed in.
-        - Meteors: Per-instance frustum+distance check. Behind-camera or >90u hidden.
-        - Particles: Distance-based check. >70u from camera hidden (scale=0).
-      */}
       <OrbitControls
         ref={controlsRef}
         makeDefault
         autoRotate={!isMobile}
-        autoRotateSpeed={isMobile ? 0.3 : 0.5}
+        autoRotateSpeed={rotationSpeed}
         enablePan={false}
         minDistance={isMobile ? 10 : 5}
         maxDistance={isMobile ? 80 : 120}

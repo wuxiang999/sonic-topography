@@ -470,6 +470,84 @@ app.get('/api/netease/playlist', async (req, res) => {
   }
 });
 
+// Account info (get uid from cookie)
+app.get('/api/netease/account', async (_req, res) => {
+  try {
+    const payload = {
+      header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
+    };
+    const data = await neteasePost('/eapi/nuser/account/get', payload);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// User playlists
+app.get('/api/netease/user/playlists', async (req, res) => {
+  const uid = req.query.uid;
+  if (!uid) return res.status(400).json({ error: 'Missing uid' });
+  try {
+    const payload = {
+      uid, limit: 100, offset: 0,
+      header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
+    };
+    const data = await neteasePost('/eapi/user/playlist', payload);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// Liked songs (uses playlist detail with uid as playlist id)
+app.get('/api/netease/liked', async (req, res) => {
+  const uid = req.query.uid;
+  if (!uid) return res.status(400).json({ error: 'Missing uid' });
+  try {
+    const payload = {
+      id: uid, n: 1000, s: 8,
+      header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
+    };
+    const result = await neteasePost('/eapi/v3/playlist/detail', payload);
+    const tracks = result?.playlist?.tracks || [];
+    const songs = tracks.map((item) => ({
+      id: item.id,
+      name: item.name,
+      artist: (item.ar || []).map((a) => a.name).filter(Boolean).join(' / '),
+      album: item.al?.name || '',
+      duration: item.dt || 0,
+      fee: item.fee || 0,
+      picUrl: item.al?.picUrl ? neteasePicUrl(item.al.pic, 300) : '',
+    }));
+    res.json({ songs, count: result?.playlist?.trackCount || 0 });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// Daily recommend
+app.get('/api/netease/recommend', async (_req, res) => {
+  try {
+    const payload = {
+      header: JSON.stringify({ os: 'pc', appver: '', osver: '', deviceId: 'pyncm!', requestId: String(Math.floor(Math.random() * 1e7 + 2e7)) }),
+    };
+    const result = await neteasePost('/eapi/discovery/recommend/songs', payload);
+    const dailySongs = result?.data?.dailySongs || [];
+    const songs = dailySongs.map((item) => ({
+      id: item.id,
+      name: item.name,
+      artist: (item.ar || []).map((a) => a.name).filter(Boolean).join(' / '),
+      album: item.al?.name || '',
+      duration: item.dt || 0,
+      fee: item.fee || 0,
+      picUrl: item.al?.picUrl ? neteasePicUrl(item.al.pic, 300) : '',
+    }));
+    res.json({ songs });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
 // ==================== STATIC & SPA ====================
 
 const staticAudioDir = path.join(__dirname, 'static-audio');

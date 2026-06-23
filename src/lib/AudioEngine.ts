@@ -1,4 +1,5 @@
 import { AudioData } from '../types';
+import { readTriggerSettingsStorage, writeTriggerSettingsStorage } from './triggerSettings';
 
 export type TriggerPreset = 'Auto Beat' | 'Advanced';
 
@@ -61,6 +62,7 @@ export class AudioEngine {
   public audioElement: HTMLAudioElement;
 
   private dataArray: Uint8Array = new Uint8Array(0);
+  private wallpaperAudioActiveUntil = 0;
   
   public isPlaying: boolean = false;
   public isCapturing: boolean = false;
@@ -93,6 +95,91 @@ export class AudioEngine {
     
     this.audioElement.addEventListener('pause', () => {
       this.isPlaying = false;
+    });
+
+    this.registerWallpaperAudioListener();
+  }
+
+  public setRenderModeAudio(actx: AudioContext, analyserNode: AnalyserNode): void {
+    this.audioCtx = actx;
+    this.analyser = analyserNode;
+    this.isPlaying = true;
+    this.dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+  }
+
+  /** Load trigger settings from localStorage and apply to pulse/meteor triggers */
+  public loadTriggerSettingsFromStorage() {
+    const stored = readTriggerSettingsStorage();
+    if (stored.Pulse) {
+      const p = stored.Pulse;
+      if (p.enabled !== undefined) this.pulseTrigger.enabled = p.enabled;
+      if (p.mode) this.pulseTrigger.mode = p.mode;
+      if (p.freqIndex !== undefined) this.pulseTrigger.freqIndex = p.freqIndex;
+      if (p.threshold !== undefined) this.pulseTrigger.threshold = p.threshold;
+      if (p.sensitivity !== undefined) this.pulseTrigger.sensitivity = p.sensitivity;
+      if (p.cooldown !== undefined) this.pulseTrigger.cooldown = p.cooldown;
+      if (p.bandStart !== undefined) this.pulseTrigger.bandStart = p.bandStart;
+      if (p.bandEnd !== undefined) this.pulseTrigger.bandEnd = p.bandEnd;
+      if (p.pulseStrength !== undefined) this.pulseTrigger.pulseStrength = p.pulseStrength;
+    }
+    if (stored.Meteor) {
+      const m = stored.Meteor;
+      if (m.enabled !== undefined) this.meteorTrigger.enabled = m.enabled;
+      if (m.mode) this.meteorTrigger.mode = m.mode;
+      if (m.freqIndex !== undefined) this.meteorTrigger.freqIndex = m.freqIndex;
+      if (m.threshold !== undefined) this.meteorTrigger.threshold = m.threshold;
+      if (m.sensitivity !== undefined) this.meteorTrigger.sensitivity = m.sensitivity;
+      if (m.cooldown !== undefined) this.meteorTrigger.cooldown = m.cooldown;
+      if (m.bandStart !== undefined) this.meteorTrigger.bandStart = m.bandStart;
+      if (m.bandEnd !== undefined) this.meteorTrigger.bandEnd = m.bandEnd;
+      if (m.pulseStrength !== undefined) this.meteorTrigger.pulseStrength = m.pulseStrength;
+    }
+  }
+
+  /** Save current trigger settings to localStorage */
+  public saveTriggerSettingsToStorage() {
+    writeTriggerSettingsStorage({
+      Pulse: {
+        enabled: this.pulseTrigger.enabled,
+        mode: this.pulseTrigger.mode,
+        freqIndex: this.pulseTrigger.freqIndex,
+        threshold: this.pulseTrigger.threshold,
+        sensitivity: this.pulseTrigger.sensitivity,
+        cooldown: this.pulseTrigger.cooldown,
+        bandStart: this.pulseTrigger.bandStart,
+        bandEnd: this.pulseTrigger.bandEnd,
+        pulseStrength: this.pulseTrigger.pulseStrength,
+      },
+      Meteor: {
+        enabled: this.meteorTrigger.enabled,
+        mode: this.meteorTrigger.mode,
+        freqIndex: this.meteorTrigger.freqIndex,
+        threshold: this.meteorTrigger.threshold,
+        sensitivity: this.meteorTrigger.sensitivity,
+        cooldown: this.meteorTrigger.cooldown,
+        bandStart: this.meteorTrigger.bandStart,
+        bandEnd: this.meteorTrigger.bandEnd,
+        pulseStrength: this.meteorTrigger.pulseStrength,
+      },
+    });
+  }
+
+  private registerWallpaperAudioListener() {
+    if (typeof (window as any).wallpaperRegisterAudioListener !== 'function') return;
+
+    (window as any).wallpaperRegisterAudioListener((audioArray: number[]) => {
+      const halfCount = Math.floor(audioArray.length / 2);
+      if (halfCount <= 0) return;
+
+      for (let i = 0; i < this.dataArray.length; i++) {
+        const sourceIndex = Math.min(halfCount - 1, Math.floor((i / this.dataArray.length) * halfCount));
+        const left = Math.min(1, Math.max(0, audioArray[sourceIndex] || 0));
+        const right = Math.min(1, Math.max(0, audioArray[sourceIndex + halfCount] || 0));
+        this.dataArray[i] = Math.round(((left + right) / 2) * 255);
+      }
+
+      this.wallpaperAudioActiveUntil = performance.now() + 300;
+      this.isPlaying = true;
     });
   }
 
@@ -354,7 +441,9 @@ export class AudioEngine {
 
 
   public getAudioData(): AudioData {
-    if (!this.analyser) {
+    const hasWallpaperAudio = performance.now() < this.wallpaperAudioActiveUntil;
+
+    if (!this.analyser && !hasWallpaperAudio) {
       return { ...this.smoothedData };
     }
 
@@ -370,8 +459,10 @@ export class AudioEngine {
 
     const binCount = this.dataArray.length; // 512
 
-    if (this.isPlaying) {
-      this.analyser.getByteFrequencyData(this.dataArray);
+    if (this.isPlaying || hasWallpaperAudio) {
+      if (!hasWallpaperAudio) {
+        this.analyser!.getByteFrequencyData(this.dataArray);
+      }
 
       let fluxPulse = 0;
       let fluxMeteor = 0;

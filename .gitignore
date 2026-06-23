@@ -13,3 +13,7 @@ docs/
 api/cookie.txt
 debug_*.mjs
 test_url*.mjs
+scene.json
+sonic-wallpaper.html
+wpconfig.json
+dist-wallpaper/

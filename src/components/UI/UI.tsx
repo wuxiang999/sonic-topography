@@ -1,35 +1,38 @@
-import { useRef, useState, useEffect } from 'react';
-import { Play, Pause, Volume2, SkipForward, SkipBack, Palette, Plus, ListMusic, Shuffle, Repeat, Trash2, Menu, X, ChevronUp, Music, Upload, Radio, Search } from 'lucide-react';
+import { useRef, useState, useEffect, lazy, Suspense } from 'react';
+import { Palette, Plus, ListMusic, Menu, Music, Upload, Radio, Search, Maximize2, History, Cloud, Monitor } from 'lucide-react';
 import { engine } from '../../lib/AudioEngine';
 import { themes } from '../../lib/themes';
-import { LyricsDisplay } from './LyricsDisplay';
+import type { ThemeColors, CustomThemeSettings, ThemeRotationSettings } from '../../lib/themes';
+import type { StoredGroundEqSettings } from '../../lib/groundEqSettings';
+import { readNeteaseCookieStorage, writeNeteaseCookieStorage } from '../../lib/neteaseCookie';
 import { DesktopPlayerPanel } from './DesktopPlayerPanel';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
-import { PlayHistory, addToHistory } from './PlayHistory';
-import { SettingsPanel, type LyricsStyleOption } from './SettingsPanel';
-import { FirstTimeTutorial } from './FirstTimeTutorial';
-import { extractAudioMetadata, extractLyricsFromAudio } from '../../lib/metadata';
+import { addToHistory } from './PlayHistory';
+import type { LyricsStyleOption, SceneSettings } from './SettingsPanel';
 
-// Placeholder for broken Netease cover images
-const PLACEHOLDER_COVER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>');
-const imgOnError = (e: React.SyntheticEvent<HTMLImageElement>) => { (e.target as HTMLImageElement).src = PLACEHOLDER_COVER; };
+const LyricsDisplay = lazy(() => import('./LyricsDisplay').then(m => ({ default: m.LyricsDisplay })));
+const PlayHistory = lazy(() => import('./PlayHistory').then(m => ({ default: m.PlayHistory })));
+const SettingsPanel = lazy(() => import('./SettingsPanel').then(m => ({ default: m.SettingsPanel })));
+const FirstTimeTutorial = lazy(() => import('./FirstTimeTutorial').then(m => ({ default: m.FirstTimeTutorial })));
+import { extractAudioMetadata, extractLyricsFromAudio } from '../../lib/metadata';
+import { useSettings } from '../../store/SettingsContext';
 
 // ── Types ──
-interface NeteaseSong {
-  id: number;
-  name: string;
-  artist: string;
-  album: string;
-  duration: number;
-  fee: number;
-  picUrl?: string;
-}
+import type { NeteaseSong, PlayMode } from '../../types';
+import { MobileOverlay } from './panels/MobileOverlay';
+import { SearchPanelContent } from './panels/SearchPanelContent';
+import { PlaylistPanelContent } from './panels/PlaylistPanelContent';
+import { SongToAddPanel } from './panels/SongToAddPanel';
+import { QueuePanelContent } from './panels/QueuePanelContent';
+import { MobilePlayerBar } from './panels/MobilePlayerBar';
+const FreqTriggerPanelWrapper = lazy(() => import('./panels/FreqTriggerPanel').then(m => ({ default: m.FreqTriggerPanelWrapper })));
+import { StatsPanel } from './panels/StatsPanel';
+const NeteasePlaylistsPanel = lazy(() => import('./panels/NeteasePlaylistsPanel').then(m => ({ default: m.NeteasePlaylistsPanel })));
 interface SavedPlaylist {
   id: string;
   name: string;
   songs: NeteaseSong[];
 }
-type PlayMode = 'sequence' | 'shuffle' | 'repeat-one';
 type PendingDelete =
   | { type: 'song'; playlistId: string; songId: number; label: string }
   | { type: 'playlist'; playlistId: string; label: string };
@@ -67,19 +70,26 @@ function hasSavedSongs(playlists: SavedPlaylist[]): boolean {
 
 // ── UI Props & Component ──
 interface UIProps {
-  theme: string;
-  onThemeChange: (t: string) => void;
   isMobile?: boolean;
   onCoverChange?: (url: string) => void;
-  uiHidden?: boolean;
-  onUiHiddenChange?: (v: boolean) => void;
-  userQuality?: 'low' | 'medium' | 'high' | null;
-  onQualityChange?: (v: 'low' | 'medium' | 'high' | null) => void;
-  userAntialias?: boolean | null;
-  onAntialiasChange?: (v: boolean | null) => void;
 }
 
-export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHidden = false, onUiHiddenChange, userQuality, onQualityChange, userAntialias, onAntialiasChange }: UIProps) {
+export function UI({
+  isMobile = false,
+  onCoverChange,
+}: UIProps) {
+  const {
+    theme, resolvedTheme, customThemes, activeCustomThemeId,
+    themeRotation, groundEqSettings, sceneSettings,
+    uiHidden, userQuality, userAntialias,
+    setTheme: onThemeChange, setCustomThemes: onCustomThemesChange,
+    setThemeRotation: onThemeRotationChange,
+    setGroundEqSettings: onGroundEqSettingsChange,
+    setSceneSettings: onSceneSettingsChange,
+    setUiHidden: onUiHiddenChange,
+    setUserQuality: onQualityChange,
+    setUserAntialias: onAntialiasChange,
+  } = useSettings();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const demoAudioUrl = '/music/demo.mp3';
   const demoLyricsUrl = '/music/demo.lrc';
@@ -132,6 +142,24 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
   const [showSettings, setShowSettings] = useState(false);
   const [maxHistoryItems, setMaxHistoryItems] = useState(50);
   const [showStats, setShowStats] = useState(true);
+
+  // Netease Cookie
+  const [showNeteaseCookiePanel, setShowNeteaseCookiePanel] = useState(false);
+  const [neteaseCookie, setNeteaseCookie] = useState(readNeteaseCookieStorage);
+  const [cookieStatus, setCookieStatus] = useState('');
+  const [showNeteasePlaylists, setShowNeteasePlaylists] = useState(false);
+
+  const handleSaveCookie = (cookie: string) => {
+    const normalized = writeNeteaseCookieStorage(cookie);
+    setNeteaseCookie(normalized || cookie);
+    if (normalized) {
+      setCookieStatus('Cookie 已保存');
+      setTimeout(() => setCookieStatus(''), 3000);
+    } else {
+      setCookieStatus('Cookie 已清除');
+      setTimeout(() => setCookieStatus(''), 3000);
+    }
+  };
 
   useEffect(() => {
     if (!hasLoadedPlaylistsRef.current) return;
@@ -525,8 +553,7 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
     };
   }, []);
 
-  const t = themes[theme] || themes['nocturnal'];
-  const accentHex = `#${t.uRippleColor.getHexString()}`;
+  const accentHex = `#${resolvedTheme.uRippleColor.getHexString()}`;
 
   // Audio-reactive - updates indicator DOM directly with scene accent colors
   useEffect(() => {
@@ -605,18 +632,63 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
               onMouseEnter={handleSidebarEnter}
               onMouseLeave={handleSidebarLeave}
             >
-              <div className="flex flex-col items-center py-3 gap-5 min-w-[44px] h-full">
+              <div className="flex flex-col items-center py-3 gap-4 min-w-[44px] h-full">
                 {/* === 功能 === */}
-                <button onClick={() => setShowSearchPanel(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="搜索">搜索</button>
-                <button onClick={() => setShowPlaylistPanel(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="播放列表">播放列表</button>
-                <button onClick={() => setShowPlayHistory(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="播放历史">播放历史</button>
-                <button onClick={() => setShowFreqPanel(true)} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="频率触发">频率触发</button>
+                <button onClick={() => setShowSearchPanel(true)} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="搜索">
+                  <Search size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>搜索</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                </button>
+                <button onClick={() => setShowPlaylistPanel(true)} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="播放列表">
+                  <ListMusic size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>播放列表</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                </button>
+                <button onClick={() => setShowPlayHistory(true)} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="播放历史">
+                  <History size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>播放历史</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                </button>
+                <button onClick={() => setShowFreqPanel(true)} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="频率触发">
+                  <Radio size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>频率触发</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                </button>
 
-                <div className="border-t border-white/5 w-6" />
+                <div className="border-t border-white/5 w-5" />
 
                 {/* === 工具 === */}
-                <button onClick={loadDemo} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer font-bold whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="示例">示例</button>
-                <button onClick={() => fileInputRef.current?.click()} className="uppercase tracking-[0.2em] text-[10px] opacity-40 hover:opacity-100 transition-opacity cursor-pointer whitespace-nowrap" style={{ writingMode: 'vertical-rl' }} title="上传">上传</button>
+                <button onClick={loadDemo} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="示例">
+                  <Music size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none font-bold" style={{ writingMode: 'vertical-rl' }}>示例</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                </button>
+                {neteaseCookie && <>
+                  <button onClick={() => setShowNeteaseCookiePanel(true)} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="网易云">
+                    <Cloud size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                    <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>网易云</span>
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                  </button>
+                  <button onClick={() => setShowNeteasePlaylists(true)} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="歌单">
+                    <ListMusic size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                    <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>歌单</span>
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                  </button>
+                </>}
+                <button onClick={() => fileInputRef.current?.click()} className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer" title="上传">
+                  <Upload size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>上传</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                </button>
+                <button
+                  onClick={() => { if (!document.fullscreenElement) { document.documentElement.requestFullscreen(); } else { document.exitFullscreen(); } }}
+                  className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer"
+                  title="全屏"
+                >
+                  <Maximize2 size={13} className="text-white/30 group-hover:text-white/70 transition-colors" />
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 group-hover:text-white/50 transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl' }}>全屏</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
+                </button>
                 <button
                   onClick={() => {
                     if (engine.isCapturing) {
@@ -629,24 +701,29 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
                       });
                     }
                   }}
-                  className={`uppercase tracking-[0.2em] text-[10px] transition-opacity cursor-pointer whitespace-nowrap ${isCapturing ? 'opacity-100 text-[#ef4444]' : 'opacity-40 hover:opacity-100'}`}
-                  style={{ writingMode: 'vertical-rl' }}
+                  className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer"
                   title={isCapturing ? '停止捕获系统音频' : '捕获系统音频'}
                 >
-                  {isCapturing ? '停止捕获' : '系统音频'}
+                  <Monitor size={13} className={`transition-colors ${isCapturing ? 'text-[#ef4444]' : 'text-white/30 group-hover:text-white/70'}`} />
+                  <span className={`text-[9px] uppercase tracking-[0.2em] transition-colors whitespace-nowrap leading-none ${isCapturing ? 'text-[#ef4444]' : 'text-white/25 group-hover:text-white/50'}`} style={{ writingMode: 'vertical-rl' }}>{isCapturing ? '停止捕获' : '系统音频'}</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 bg-white/10 rounded-r-full transition-all duration-200" />
                 </button>
 
                 <div className="flex-1" />
 
                 {/* === 设置 === */}
-                <div className="border-t border-white/5 w-6" />
+                <div className="border-t border-white/5 w-5" />
                 <button
                   onClick={() => setShowSettings(true)}
-                  className="uppercase tracking-[0.2em] text-[10px] opacity-50 hover:opacity-100 transition-all cursor-pointer whitespace-nowrap"
-                  style={{ writingMode: 'vertical-rl', color: showSettings ? accentHex : 'rgba(255,255,255,0.5)' }}
+                  className="group relative flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-sm hover:bg-white/[0.03] transition-colors cursor-pointer"
                   title="设置"
                 >
-                  设置
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-colors ${showSettings ? 'opacity-100' : 'text-white/30 group-hover:text-white/70'}`} style={{ color: showSettings ? accentHex : undefined }}>
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                  <span className="text-[9px] uppercase tracking-[0.2em] transition-colors whitespace-nowrap leading-none" style={{ writingMode: 'vertical-rl', color: showSettings ? accentHex : 'rgba(255,255,255,0.25)' }}>设置</span>
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-0 group-hover:h-5 rounded-r-full transition-all duration-200" style={{ backgroundColor: showSettings ? accentHex : 'rgba(255,255,255,0)' }} />
                 </button>
               </div>
               <input type="file" ref={fileInputRef} accept="audio/*,.lrc" multiple className="hidden" onChange={handleFileChange} />
@@ -655,7 +732,8 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
 
           {/* Desktop Search Panel */}
           {showSearchPanel && (
-            <div className="absolute top-[40px] left-[100px] w-[360px] max-h-[70vh] z-50 pointer-events-auto backdrop-blur-[20px] border border-white/10 rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.88)' }}>
+            <div className="absolute top-[40px] left-[100px] w-[360px] max-h-[70vh] z-50 pointer-events-auto backdrop-blur-[20px] border border-white/[0.08] rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.88)' }}>
+              <div className="absolute top-[1px] left-0 right-0 h-[1px] z-10 pointer-events-none bg-white/[0.04]" />
               <SearchPanelContent
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
@@ -674,7 +752,8 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
 
           {/* Desktop Playlist Panel */}
           {showPlaylistPanel && (
-            <div className="absolute top-[40px] left-[100px] w-[420px] max-h-[74vh] z-[65] pointer-events-auto backdrop-blur-[20px] border border-white/10 rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.9)' }}>
+            <div className="absolute top-[40px] left-[100px] w-[420px] max-h-[74vh] z-[65] pointer-events-auto backdrop-blur-[20px] border border-white/[0.08] rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.9)' }}>
+              <div className="absolute top-[1px] left-0 right-0 h-[1px] z-10 pointer-events-none bg-white/[0.04]" />
               <PlaylistPanelContent
                 playlists={playlists}
                 activePlaylist={activePlaylist}
@@ -690,9 +769,61 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
             </div>
           )}
 
+          {/* Desktop Netease Cookie Panel */}
+          {showNeteaseCookiePanel && (
+            <div className="absolute top-[280px] left-[100px] w-[360px] z-[70] pointer-events-auto backdrop-blur-[20px] border border-white/[0.08] rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.94)' }}>
+              <div className="absolute top-[1px] left-0 right-0 h-[1px] z-10 pointer-events-none bg-white/[0.04]" />
+              <div className="p-5 border-b border-white/10">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.2em] text-white/70">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    网易云 Cookie
+                  </div>
+                  <button onClick={() => setShowNeteaseCookiePanel(false)} className="text-[10px] uppercase tracking-[0.15em] text-white/40 hover:text-white">关闭</button>
+                </div>
+                <div className="text-[10px] text-white/40 leading-relaxed mb-3">
+                  从浏览器复制你的网易云 Cookie 粘贴到下方，以启用完整搜索权限。
+                </div>
+                <textarea
+                  value={neteaseCookie}
+                  onChange={(e) => setNeteaseCookie(e.target.value)}
+                  placeholder="粘贴 Cookie..."
+                  className="w-full bg-white/5 border border-white/10 rounded-sm px-3 py-2.5 text-[11px] text-white outline-none focus:border-white/30 min-h-[80px] resize-y placeholder:text-white/20 font-mono"
+                />
+                <div className="flex items-center justify-between mt-3">
+                  <div className="text-[10px] text-white/30">
+                    <a href="https://music.163.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-white/60">打开网易云音乐</a>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {cookieStatus && <span className="text-[10px]" style={{ color: accentHex }}>{cookieStatus}</span>}
+                    <button
+                      onClick={() => handleSaveCookie(neteaseCookie)}
+                      className="px-4 py-2 text-[10px] uppercase tracking-[0.15em] text-black rounded-sm hover:scale-105 active:scale-95 transition-all"
+                      style={{ backgroundColor: accentHex }}
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Desktop Netease Playlists Panel */}
+          {showNeteasePlaylists && (
+            <Suspense fallback={null}>
+              <NeteasePlaylistsPanel
+                onClose={() => setShowNeteasePlaylists(false)}
+                onPlaySong={(song) => loadNeteaseSong(song)}
+                accentHex={accentHex}
+              />
+            </Suspense>
+          )}
+
           {/* Desktop Song-to-Add Dialog */}
           {songToAdd && (
-            <div className="absolute top-[120px] left-[480px] w-[280px] z-[70] pointer-events-auto backdrop-blur-[20px] border border-white/10 rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.94)' }}>
+            <div className="absolute top-[120px] left-[480px] w-[280px] z-[70] pointer-events-auto backdrop-blur-[20px] border border-white/[0.08] rounded-sm overflow-hidden" style={{ background: 'rgba(5,10,15,0.94)' }}>
+              <div className="absolute top-[1px] left-0 right-0 h-[1px] z-10 pointer-events-none bg-white/[0.04]" />
               <SongToAddPanel
                 songToAdd={songToAdd!}
                 playlists={playlists}
@@ -707,7 +838,7 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
           )}
 
           {/* Desktop Player Panel */}
-          {hasTrack && (
+          {hasTrack && resolvedTheme.uShowPlayerPanel && (
             <DesktopPlayerPanel
               trackName={trackName}
               artistName={artistName}
@@ -861,8 +992,9 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
             <div className="fixed inset-0 z-[70] pointer-events-auto">
               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)} />
               <div
-                className="absolute bottom-[140px] right-[16px] w-[180px] border border-white/10 rounded-sm overflow-hidden shadow-2xl"
-                style={{ background: 'rgba(5,10,15,0.96)' }}
+                className="absolute bottom-[140px] right-[16px] w-[180px] border border-white/[0.08] rounded-sm overflow-hidden shadow-2xl"
+                style={{ background: 'rgba(5,10,15,0.96)' }}>
+                <div className="absolute top-[1px] left-0 right-0 h-[1px] z-10 pointer-events-none bg-white/[0.04]" />
               >
                 <button
                   onClick={() => { setMobileMenuOpen(false); setShowFreqPanel(true); }}
@@ -959,6 +1091,7 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
               playMode={playMode}
               setPlayMode={setPlayMode}
               onThemeChange={onThemeChange}
+              seekingRef={seekingRef}
               onClose={() => {
                 setPlayQueue([]);
                 setCurrentSongId(null);
@@ -987,18 +1120,23 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
 
       {/* Lyrics Display */}
       {hasTrack && lyricsText && (
-        <LyricsDisplay lrcText={lyricsText} currentTime={currentTime} accentHex={accentHex} isPlaying={isPlaying} isMobile={isMobile} isVisible={lyricsVisible} lyricsStyle={lyricsStyle} />
+        <Suspense fallback={null}>
+          <LyricsDisplay lrcText={lyricsText} currentTime={currentTime} accentHex={accentHex} isPlaying={isPlaying} isMobile={isMobile} isVisible={lyricsVisible} lyricsStyle={lyricsStyle} />
+        </Suspense>
       )}
 
       {/* 频率触发 Panel (shared - already works on both) */}
       {showFreqPanel && (
-        <FreqTriggerPanelWrapper onClose={() => setShowFreqPanel(false)} accentHex={accentHex} />
+        <Suspense fallback={null}>
+          <FreqTriggerPanelWrapper onClose={() => setShowFreqPanel(false)} accentHex={accentHex} />
+        </Suspense>
       )}
 
       {/* Delete Confirm Modal (shared) */}
       {pendingDelete && (
         <div className="absolute inset-0 z-[120] pointer-events-auto flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-[320px] border border-white/10 rounded-sm p-5" style={{ background: 'rgba(5,10,15,0.96)' }}>
+          <div className="w-[320px] border border-white/[0.08] rounded-sm p-5 relative" style={{ background: 'rgba(5,10,15,0.96)' }}>
+            <div className="absolute top-[1px] left-0 right-0 h-[1px] z-10 pointer-events-none bg-white/[0.04]" />
             <div className="text-[12px] uppercase tracking-[0.2em] text-white/70 mb-3">
               确认删除
             </div>
@@ -1031,40 +1169,42 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
       />
 
       {/* Play History Panel */}
-      <PlayHistory
-        isOpen={showPlayHistory}
-        onClose={() => setShowPlayHistory(false)}
-        onLoadSong={(id: number) => {
-          const queue = getCurrentQueue();
-          const song = queue.find((s: NeteaseSong) => s.id === id);
-          if (song) loadNeteaseSong(song, queue);
-        }}
-        accentHex={accentHex}
-      />
+      <Suspense fallback={null}>
+        <PlayHistory
+          isOpen={showPlayHistory}
+          onClose={() => setShowPlayHistory(false)}
+          onLoadSong={(id: number) => {
+            const queue = getCurrentQueue();
+            const song = queue.find((s: NeteaseSong) => s.id === id);
+            if (song) loadNeteaseSong(song, queue);
+          }}
+          accentHex={accentHex}
+        />
+      </Suspense>
 
       {/* Settings Panel */}
-      <SettingsPanel
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-        lyricsVisible={lyricsVisible}
-        onLyricsVisibleChange={setLyricsVisible}
-        lyricsStyle={lyricsStyle}
-        onLyricsStyleChange={setLyricsStyle}
-        accentHex={accentHex}
-        maxHistoryItems={maxHistoryItems}
-        onMaxHistoryChange={setMaxHistoryItems}
-        showStats={showStats}
-        onStatsVisibleChange={setShowStats}
-        uiHidden={uiHidden}
-        onUiHiddenChange={onUiHiddenChange}
-        userQuality={userQuality}
-        onQualityChange={onQualityChange}
-        userAntialias={userAntialias}
-        onAntialiasChange={onAntialiasChange}
-      />
+      <Suspense fallback={null}>
+        <SettingsPanel
+          isOpen={showSettings}
+          onClose={() => setShowSettings(false)}
+          neteaseCookie={neteaseCookie}
+          onNeteaseCookieChange={handleSaveCookie}
+          lyricsVisible={lyricsVisible}
+          onLyricsVisibleChange={setLyricsVisible}
+          lyricsStyle={lyricsStyle}
+          onLyricsStyleChange={setLyricsStyle}
+          accentHex={accentHex}
+          maxHistoryItems={maxHistoryItems}
+          onMaxHistoryChange={setMaxHistoryItems}
+          showStats={showStats}
+          onStatsVisibleChange={setShowStats}
+        />
+      </Suspense>
 
       {/* First-Time Tutorial */}
-      <FirstTimeTutorial accentHex={accentHex} isMobile={isMobile} />
+      <Suspense fallback={null}>
+        <FirstTimeTutorial accentHex={accentHex} isMobile={isMobile} />
+      </Suspense>
 
       {/* Brand Mark (outside pointer-events-none wrapper) */}
       {watermarkVisible ? (
@@ -1084,871 +1224,4 @@ export function UI({ theme, onThemeChange, isMobile = false, onCoverChange, uiHi
   );
 }
 
-/* ==================== MOBILE OVERLAY ==================== */
 
-function MobileOverlay({ onClose, title, children }: { onClose: () => void; title: string; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-[65] pointer-events-auto backdrop-blur-[20px] flex flex-col" style={{ background: 'rgba(5,10,15,0.95)' }}>
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-        <div className="text-[12px] uppercase tracking-[0.2em] text-white/70">{title}</div>
-        <button onClick={onClose} className="text-[10px] uppercase tracking-[0.15em] text-white/40 hover:text-white">
-          <X size={16} />
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/* ==================== SEARCH PANEL CONTENT ==================== */
-
-function SearchPanelContent({
-  searchQuery, setSearchQuery, searchNetease, isSearching, searchStatus,
-  searchResults, currentSongId, loadNeteaseSong, setSongToAdd, onClose, accentHex
-}: {
-  searchQuery: string; setSearchQuery: (v: string) => void;
-  searchNetease: () => void; isSearching: boolean;
-  searchStatus: string; searchResults: NeteaseSong[];
-  currentSongId: number | null; loadNeteaseSong: (song: NeteaseSong, queue?: NeteaseSong[]) => void;
-  setSongToAdd: (song: NeteaseSong | null) => void; onClose: () => void; accentHex: string;
-}) {
-  const [visibleCount, setVisibleCount] = useState(8);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => { setVisibleCount(8); }, [searchResults]);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setVisibleCount((prev) => Math.min(prev + 6, searchResults.length));
-        }
-      },
-      { root: containerRef.current, rootMargin: "100px" }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [searchResults.length]);
-
-  const hasMore = visibleCount < searchResults.length;
-
-  return (
-    <>
-      <style>{`@keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
-      <div className="p-5 border-b border-white/10">
-        <div className="flex items-center justify-between mb-4">
-          <div className="text-[12px] uppercase tracking-[0.2em] text-white/70">
-            <span className="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-              网易云搜索
-            </span>
-          </div>
-          <button onClick={onClose} className="text-[10px] uppercase tracking-[0.15em] text-white/40 hover:text-white transition-colors duration-300">关闭</button>
-        </div>
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); searchNetease(); }}>
-          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索歌曲或歌手..."
-            className="min-w-0 flex-1 bg-white/5 border border-white/10 rounded-sm px-3 py-2.5 text-[12px] text-white outline-none focus:border-white/30 transition-all duration-300 placeholder:text-white/20"
-          />
-          <button type="submit" disabled={isSearching}
-            className="px-4 py-2.5 text-[10px] uppercase tracking-[0.15em] text-black rounded-sm disabled:opacity-50 hover:scale-105 active:scale-95 transition-all duration-200"
-            style={{ backgroundColor: accentHex }}>
-            {isSearching ? (
-              <span className="flex items-center gap-1.5">
-                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                搜索中
-              </span>
-            ) : "搜索"}
-          </button>
-        </form>
-        {searchStatus && <div className="mt-3 text-[11px] text-white/45 animate-pulse">{searchStatus}</div>}
-        {searchResults.length > 0 && (
-          <div className="mt-3 text-[9px] uppercase tracking-[0.2em] text-white/20">
-            找到 {searchResults.length} 首 · 显示 {Math.min(visibleCount, searchResults.length)}
-          </div>
-        )}
-      </div>
-
-      <div ref={containerRef} className="max-h-[48vh] overflow-y-auto scroll-smooth">
-        <div className="py-1">
-          {searchResults.slice(0, visibleCount).map((song, idx) => (
-            <button key={song.id} onClick={() => loadNeteaseSong(song, searchResults)}
-              className="relative w-full text-left px-5 py-3 pr-14 border-b border-white/[0.03] hover:bg-white/[0.04] active:bg-white/[0.06] transition-all duration-200 group"
-              style={{ animation: "fadeSlideIn 0.35s ease-out both", animationDelay: ((idx % 8) * 0.04) + "s" }}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-[3px] overflow-hidden flex-shrink-0 bg-white/5">
-                  {song.picUrl ? (
-                    <img src={song.picUrl} alt="" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" onError={imgOnError} />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-white/10">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-                    </div>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className={"flex items-center gap-2 text-[13px] truncate transition-colors duration-300 " + (currentSongId === song.id ? "text-white" : "text-white/80 group-hover:text-white")}>
-                    {currentSongId === song.id && (
-                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse" style={{ backgroundColor: accentHex }} />
-                    )}
-                    <span className="truncate">{song.name}</span>
-                  </div>
-                  <div className="mt-0.5 text-[10px] text-white/35 truncate group-hover:text-white/50 transition-colors duration-300">
-                    {song.artist || "未知歌手"} · {song.album || ""}
-                  </div>
-                </div>
-              </div>
-              <span role="button" tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); setSongToAdd(song); }}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); setSongToAdd(song); }}}
-                className="absolute right-4 top-1/2 -translate-y-1/2 h-7 w-7 rounded-sm border border-white/5 text-white/30 hover:text-black hover:border-transparent hover:scale-110 active:scale-95 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100"
-                title="添加到歌单"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {hasMore && (
-          <div ref={sentinelRef} className="flex items-center justify-center py-5 gap-2 text-[10px] text-white/20 uppercase tracking-[0.15em]">
-            <span className="w-4 h-[1px] bg-white/10" />
-            <span className="flex items-center gap-1.5">
-              加载更多
-              <svg className="animate-bounce w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 13l5 5 5-5M7 6l5 5 5-5"/></svg>
-            </span>
-            <span className="w-4 h-[1px] bg-white/10" />
-          </div>
-        )}
-
-        {!hasMore && searchResults.length > 0 && (
-          <div className="flex items-center justify-center py-4 text-[9px] text-white/15 uppercase tracking-[0.2em]">&mdash; 已显示全部 {searchResults.length} 首 &mdash;</div>
-        )}
-      </div>
-    </>
-  );
-}
-
-/* ==================== PLAYLIST PANEL CONTENT ==================== */
-
-function PlaylistPanelContent({
-  playlists, activePlaylist, activePlaylistId, setActivePlaylistId,
-  currentSongId, loadNeteaseSong, setPendingDelete, playlistsLength, onClose, accentHex
-}: {
-  playlists: SavedPlaylist[]; activePlaylist: SavedPlaylist | undefined;
-  activePlaylistId: string; setActivePlaylistId: (id: string) => void;
-  currentSongId: number | null; loadNeteaseSong: (song: NeteaseSong, queue?: NeteaseSong[]) => void;
-  setPendingDelete: (pd: PendingDelete) => void; playlistsLength: number;
-  onClose: () => void; accentHex: string;
-}) {
-  return (
-    <>
-      <div className="p-5 border-b border-white/10">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3 text-[12px] uppercase tracking-[0.2em] text-white/70">
-            <ListMusic size={15} />
-            播放列表
-          </div>
-          <button onClick={onClose} className="text-[10px] uppercase tracking-[0.15em] text-white/40 hover:text-white">关闭</button>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
-            {playlists.map((playlist) => (
-              <button
-                key={playlist.id}
-                onClick={() => setActivePlaylistId(playlist.id)}
-                className={`flex-shrink-0 px-3 py-2 rounded-sm border text-[10px] uppercase tracking-[0.12em] transition-colors ${activePlaylist?.id === playlist.id ? 'text-black border-transparent' : 'text-white/45 border-white/10 hover:text-white'}`}
-                style={{ backgroundColor: activePlaylist?.id === playlist.id ? accentHex : 'transparent' }}
-              >
-                {playlist.name}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => activePlaylist && setPendingDelete({ type: 'playlist', playlistId: activePlaylist.id, label: activePlaylist.name })}
-            disabled={!activePlaylist || playlistsLength <= 1}
-            className="h-8 w-8 flex-shrink-0 rounded-sm border border-white/10 text-white/45 hover:text-[#ef4444] disabled:opacity-20 disabled:hover:text-white/45 flex items-center justify-center"
-            title="删除歌单"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-      </div>
-      <div className="max-h-[52vh] overflow-y-auto">
-        {activePlaylist && activePlaylist.songs.length > 0 ? activePlaylist.songs.map((song) => (
-          <button
-            key={song.id}
-            onClick={() => loadNeteaseSong(song, activePlaylist.songs)}
-            className="relative w-full text-left px-5 py-4 pr-16 border-b border-white/5 hover:bg-white/5 transition-colors"
-          >
-            <div className="text-[13px] text-white truncate">{song.name}</div>
-            <div className="mt-1 text-[11px] text-white/45 truncate">{song.artist || '未知歌手'} - {song.album || '未知专辑'}</div>
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={(e) => { e.stopPropagation(); setPendingDelete({ type: 'song', playlistId: activePlaylist.id, songId: song.id, label: song.name }); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setPendingDelete({ type: 'song', playlistId: activePlaylist.id, songId: song.id, label: song.name }); }
-              }}
-              className="absolute right-5 top-1/2 -translate-y-1/2 h-8 w-8 rounded-sm border border-white/10 text-white/45 hover:text-[#ef4444] transition-colors flex items-center justify-center"
-              title="从歌单移除"
-            >
-              <Trash2 size={14} />
-            </span>
-          </button>
-        )) : (
-          <div className="px-5 py-8 text-[12px] text-white/40">歌单中暂无歌曲</div>
-        )}
-      </div>
-    </>
-  );
-}
-
-/* ==================== SONG-TO-ADD PANEL ==================== */
-
-function SongToAddPanel({
-  songToAdd, playlists, newPlaylistName, setNewPlaylistName,
-  addSongToPlaylist, createPlaylistAndAddSong, onClose, accentHex
-}: {
-  songToAdd: NeteaseSong; playlists: SavedPlaylist[];
-  newPlaylistName: string; setNewPlaylistName: (v: string) => void;
-  addSongToPlaylist: (id: string, song: NeteaseSong) => void;
-  createPlaylistAndAddSong: () => void; onClose: () => void; accentHex: string;
-}) {
-  return (
-    <>
-      <div className="p-5 border-b border-white/10">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-white/45 mb-2">添加到歌单</div>
-            <div className="text-[13px] text-white truncate" title={songToAdd.name}>{songToAdd.name}</div>
-          </div>
-          <button onClick={onClose} className="text-[10px] uppercase tracking-[0.15em] text-white/40 hover:text-white">关闭</button>
-        </div>
-      </div>
-      <div className="p-3 border-b border-white/10">
-        {playlists.map((playlist) => (
-          <button
-            key={playlist.id}
-            onClick={() => addSongToPlaylist(playlist.id, songToAdd)}
-            className="w-full flex items-center justify-between gap-3 px-3 py-3 text-left hover:bg-white/5 rounded-sm transition-colors"
-          >
-            <span className="min-w-0 text-[12px] text-white truncate">{playlist.name}</span>
-            <span className="text-[10px] text-white/35">{playlist.songs.length}</span>
-          </button>
-        ))}
-      </div>
-      <form className="p-4 flex gap-2" onSubmit={(e) => { e.preventDefault(); createPlaylistAndAddSong(); }}>
-        <input
-          value={newPlaylistName}
-          onChange={(e) => setNewPlaylistName(e.target.value)}
-          placeholder="新建歌单"
-          className="min-w-0 flex-1 bg-white/5 border border-white/10 rounded-sm px-3 py-2 text-[12px] text-white outline-none focus:border-white/30"
-        />
-        <button type="submit" className="h-9 w-9 flex-shrink-0 rounded-sm text-black flex items-center justify-center disabled:opacity-50"
-          style={{ backgroundColor: accentHex }} disabled={!newPlaylistName.trim()} title="创建歌单">
-          <Plus size={15} />
-        </button>
-      </form>
-    </>
-  );
-}
-
-/* ==================== DESKTOP PLAYER PANEL ==================== */
-
-/* ==================== QUEUE PANEL CONTENT ==================== */
-
-function QueuePanelContent({
-  queue, currentSongId, loadNeteaseSong, removeFromQueue, onClose, accentHex
-}: {
-  queue: NeteaseSong[]; currentSongId: number | null;
-  loadNeteaseSong: (song: NeteaseSong, queue?: NeteaseSong[]) => void;
-  removeFromQueue: (id: number) => void; onClose: () => void; accentHex: string;
-}) {
-  const [items, setItems] = useState(queue);
-  useEffect(() => { setItems(queue); }, [queue]);
-
-  return (
-    <>
-      <div className="p-5 border-b border-white/10">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-[12px] uppercase tracking-[0.2em] text-white/70">
-            <span className="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-              播放队列
-            </span>
-          </div>
-          <button onClick={onClose} className="text-[10px] uppercase tracking-[0.15em] text-white/40 hover:text-white transition-colors">关闭</button>
-        </div>
-        <div className="text-[9px] text-white/20 uppercase tracking-[0.2em]">{queue.length} 首</div>
-      </div>
-      <div className="max-h-[48vh] overflow-y-auto scroll-smooth">
-        {queue.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-white/20 gap-3">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-            <div className="text-[11px] uppercase tracking-[0.2em]">队列为空</div>
-            <div className="text-[9px] text-white/10">搜索歌曲添加到队列</div>
-          </div>
-        ) : (
-          <div className="py-1">
-            {items.map((song: NeteaseSong, idx: number) => (
-              <div key={song.id}
-                className={"relative w-full flex items-center gap-3 px-5 py-2.5 border-b border-white/[0.03] transition-all duration-200 group " + (currentSongId === song.id ? "bg-white/[0.04]" : "hover:bg-white/[0.03]")}
-              >
-                <span className="text-[10px] text-white/20 w-4 text-right flex-shrink-0 font-mono">{idx + 1}</span>
-                <button onClick={() => loadNeteaseSong(song, queue)}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <div className={"text-[12px] truncate " + (currentSongId === song.id ? "text-white" : "text-white/70 group-hover:text-white/90")}>
-                    {currentSongId === song.id && (
-                      <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle animate-pulse" style={{ backgroundColor: accentHex }} />
-                    )}
-                    {song.name}
-                  </div>
-                  <div className="text-[9px] text-white/30 truncate">{song.artist || "未知"}</div>
-                </button>
-                <button onClick={() => removeFromQueue(song.id)}
-                  className="text-white/15 hover:text-red-400 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
-                  title="移出队列"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-/* ==================== MOBILE PLAYER BAR ==================== */
-
-function MobilePlayerBar({
-  trackName, isCapturing, theme, accentHex,
-  currentTime, duration, isPlaying, togglePlay,
-  playFromQueue, getCurrentQueue, formatTime,
-  volume, setVolume, songToAdd, newPlaylistName, setNewPlaylistName,
-  addSongToPlaylist, createPlaylistAndAddSong, onClose,
-  playMode, setPlayMode, onThemeChange,
-}: {
-  trackName: string; isCapturing: boolean; theme: string;
-  accentHex: string; currentTime: number; duration: number;
-  isPlaying: boolean; togglePlay: () => void;
-  playFromQueue: (d: 1 | -1) => void; getCurrentQueue: () => NeteaseSong[];
-  formatTime: (t: number) => string;
-  volume: number; setVolume: (v: number) => void;
-  songToAdd: NeteaseSong | null; newPlaylistName: string; setNewPlaylistName: (v: string) => void;
-  addSongToPlaylist: (id: string, song: NeteaseSong) => void;
-  createPlaylistAndAddSong: () => void; onClose: () => void;
-  playMode: PlayMode; setPlayMode: (m: PlayMode | ((p: PlayMode) => PlayMode)) => void;
-  onThemeChange: (t: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <>
-      {/* Collapsed Bottom Bar */}
-      <div
-        className="fixed bottom-0 left-0 right-0 z-50 pointer-events-auto border-t border-white/10"
-        style={{ background: 'rgba(2,4,10,0.92)' }}
-      >
-        {/* Thin progress bar at top */}
-        <div className="w-full h-[2px] bg-white/10">
-          <div
-            className="h-full transition-all duration-200"
-            style={{ backgroundColor: accentHex, width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-          />
-        </div>
-
-        <div className="flex items-center h-[64px] px-3 gap-2">
-          {/* Tap to expand */}
-          <button onClick={() => setExpanded(true)} className="flex-1 flex items-center gap-2 min-w-0">
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] text-white truncate">{trackName}</div>
-              <div className="text-[9px] text-white/40 uppercase tracking-wider mt-0.5">
-                {theme === 'auto' ? '随歌自适应' : themes[theme]?.name} · {formatTime(currentTime)} / {formatTime(duration)}
-              </div>
-            </div>
-          </button>
-
-          {/* Controls */}
-          <div className="flex items-center gap-3">
-            <button onClick={() => playFromQueue(-1)}
-              className="text-white/60 hover:text-white transition-colors disabled:opacity-25"
-              disabled={getCurrentQueue().length === 0}>
-              <SkipBack size={18} />
-            </button>
-            <button onClick={togglePlay} className="text-white hover:text-white transition-colors w-[40px] h-[40px] rounded-full flex items-center justify-center"
-              style={{ backgroundColor: `${accentHex}22` }}>
-              {isPlaying ? <Pause size={18} className="fill-current" /> : <Play size={18} className="fill-current ml-0.5" />}
-            </button>
-            <button onClick={() => playFromQueue(1)}
-              className="text-white/60 hover:text-white transition-colors disabled:opacity-25"
-              disabled={getCurrentQueue().length === 0}>
-              <SkipForward size={18} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Expanded Player Overlay */}
-      {expanded && (
-        <div className="fixed inset-0 z-[80] pointer-events-auto flex flex-col"
-          style={{ background: 'rgba(2,4,10,0.96)' }}>
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-            <div className="text-[12px] uppercase tracking-[0.2em] text-white/70">正在播放</div>
-            <button onClick={() => setExpanded(false)} className="text-white/40 hover:text-white">
-              <ChevronUp size={20} />
-            </button>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 flex flex-col p-6 gap-6">
-            {/* Track info */}
-            <div>
-              <div className="text-[22px] font-light tracking-[0.05em] text-white truncate">{trackName}</div>
-              <div className="text-[11px] opacity-50 uppercase mt-2 tracking-wider">
-                {isCapturing ? '系统音频录制' : '本地音频'}
-                <span className="ml-2 text-[#3b82f6]">&bull; {theme === 'auto' ? '随歌自适应' : themes[theme]?.name}</span>
-              </div>
-            </div>
-
-            {/* Progress bar with time labels */}
-            <div className="flex flex-col gap-2">
-              <div className="relative h-[6px] bg-white/10 rounded-full overflow-hidden">
-                 <input
-                   type="range" min={0} max={duration || 100} step="0.01"
-                   value={currentTime}
-                   onPointerDown={() => { seekingRef.current = true; }}
-                   onPointerUp={() => { seekingRef.current = false; }}
-                   onChange={(e) => {
-                     if (engine.audioElement) {
-                       engine.audioElement.currentTime = parseFloat(e.target.value);
-                     }
-                   }}
-                   className="absolute inset-0 w-full opacity-0 cursor-pointer"
-                 />
-              </div>
-              <div className="flex justify-between text-[10px] text-white/50 uppercase tracking-wider">
-                <span>{formatTime(currentTime)}</span>
-                <span>{formatTime(duration)}</span>
-              </div>
-            </div>
-
-            {/* Controls */}
-            <div className="flex items-center justify-center gap-8">
-              <button onClick={() => {
-                  const keys = ['auto', ...Object.keys(themes)];
-                  const nextIndex = (keys.indexOf(theme) + 1) % keys.length;
-                  onThemeChange(keys[nextIndex]);
-                }}
-                className="text-white/40 hover:text-white transition-colors"
-                title="切换主题">
-                <Palette size={20} />
-              </button>
-              <button onClick={() => playFromQueue(-1)}
-                className="text-white/60 hover:text-white transition-colors disabled:opacity-25"
-                disabled={getCurrentQueue().length === 0}>
-                <SkipBack size={24} />
-              </button>
-              <button onClick={togglePlay}
-                className="w-[64px] h-[64px] rounded-full flex items-center justify-center text-white"
-                style={{ backgroundColor: accentHex }}>
-                {isPlaying ? <Pause size={28} className="fill-current" /> : <Play size={28} className="fill-current ml-1" />}
-              </button>
-              <button onClick={() => playFromQueue(1)}
-                className="text-white/60 hover:text-white transition-colors disabled:opacity-25"
-                disabled={getCurrentQueue().length === 0}>
-                <SkipForward size={24} />
-              </button>
-              <button onClick={() => setPlayMode((mode: PlayMode) => mode === 'sequence' ? 'shuffle' : mode === 'shuffle' ? 'repeat-one' : 'sequence')}
-                className="hover:text-white transition-colors"
-                style={{ color: playMode !== 'sequence' ? accentHex : undefined }}>
-                {playMode === 'sequence' ? <Repeat size={20} /> : playMode === 'shuffle' ? <Shuffle size={20} /> : <span className="relative"><Repeat size={20} /><span className="absolute -top-1 -right-1 text-[8px] font-bold">1</span></span>}
-              </button>
-            </div>
-
-            {/* Volume */}
-            <div className="flex items-center gap-3 mt-auto">
-              <Volume2 size={16} className="text-white/50" />
-              <div className="flex-1 relative h-[4px] bg-white/10 rounded-full overflow-hidden">
-                <div className="absolute top-0 left-0 h-full rounded-full"
-                  style={{ backgroundColor: accentHex, width: `${volume * 100}%` }} />
-                <input
-                  type="range" min={0} max={1} step={0.01}
-                  value={volume}
-                  onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    engine.audioElement.volume = val;
-                    setVolume(val);
-                  }}
-                  className="absolute inset-0 w-full opacity-0 cursor-pointer"
-                />
-              </div>
-            </div>
-
-            {/* Close */}
-            <button onClick={onClose}
-              className="text-[10px] uppercase tracking-[0.2em] text-white/40 hover:text-white self-center mt-2">
-              关闭曲目
-            </button>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ==================== 频率触发 PANEL ==================== */
-
-import { TriggerPreset } from '../../lib/AudioEngine';
-
-function FreqTriggerPanelWrapper({ onClose, accentHex }: { onClose: () => void, accentHex: string }) {
-  const [action, setAction] = useState<'Pulse' | 'Meteor'>('Meteor');
-  return (
-    <FreqTriggerPanel key={action} action={action} setAction={setAction} onClose={onClose} accentHex={accentHex} />
-  );
-}
-
-function FreqTriggerPanel({ action, setAction, onClose, accentHex }: { action: 'Pulse' | 'Meteor', setAction: (a: 'Pulse' | 'Meteor') => void, onClose: () => void, accentHex: string }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  const getConfig = () => action === 'Pulse' ? engine.pulseTrigger : engine.meteorTrigger;
-
-  const [triggerPoint, setTriggerPoint] = useState({
-    x: getConfig().freqIndex >= 0 ? getConfig().freqIndex / 512 : 0.5,
-    y: getConfig().threshold
-  });
-  const [isEnabled, setIsEnabled] = useState(getConfig().enabled);
-  const [mode, setMode] = useState<TriggerPreset>(getConfig().mode);
-  const [sensitivity, setSensitivity] = useState(getConfig().sensitivity);
-  const [cooldown, setCooldown] = useState(getConfig().cooldown);
-  const [pulseStrength, setPulseStrength] = useState(getConfig().pulseStrength);
-  const [bandStart, setBandStart] = useState(getConfig().bandStart);
-  const [bandEnd, setBandEnd] = useState(getConfig().bandEnd);
-  const isDragging = useRef(false);
-
-  // Sync state TO engine when parameters change
-  useEffect(() => {
-     const c = getConfig();
-     c.enabled = isEnabled;
-     c.mode = mode;
-     c.sensitivity = sensitivity;
-     c.cooldown = cooldown;
-     c.pulseStrength = pulseStrength;
-     c.bandStart = bandStart;
-     c.bandEnd = bandEnd;
-
-     if (mode === 'Advanced') {
-         c.freqIndex = Math.floor(triggerPoint.x * 512);
-         c.threshold = triggerPoint.y;
-     } else {
-         c.freqIndex = -1;
-     }
-  }, [isEnabled, mode, sensitivity, cooldown, pulseStrength, bandStart, bandEnd, triggerPoint]);
-
-  const handleModeChange = (newMode: TriggerPreset) => {
-    setMode(newMode);
-  };
-
-  const presets: TriggerPreset[] = ['Auto Beat', 'Advanced'];
-
-  useEffect(() => {
-    let animationId: number;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const draw = () => {
-      animationId = requestAnimationFrame(draw);
-      const width = canvas.width;
-      const height = canvas.height;
-
-      ctx.clearRect(0, 0, width, height);
-
-      // Draw grid
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-      ctx.beginPath();
-      for(let i=1; i<10; i++) {
-         ctx.moveTo(0, height * i / 10);
-         ctx.lineTo(width, height * i / 10);
-         ctx.moveTo(width * i / 10, 0);
-         ctx.lineTo(width * i / 10, height);
-      }
-      ctx.stroke();
-
-      const data = engine.getRawFrequencyData();
-      const binCount = data.length || 512;
-
-      // Draw highlighted band
-      const [startBin, endBin] = getConfig().getTriggerRange();
-      const startX = (startBin / binCount) * width;
-      const endX = (endBin / binCount) * width;
-
-      ctx.fillStyle = mode === 'Advanced' ? 'rgba(255,255,255,0.02)' : `${accentHex}20`;
-      ctx.fillRect(startX, 0, Math.max(1, endX - startX), height);
-
-      if (mode !== 'Advanced') {
-         ctx.strokeStyle = accentHex + '80';
-         ctx.lineWidth = 1;
-         ctx.beginPath();
-         ctx.moveTo(endX, 0);
-         ctx.lineTo(endX, height);
-         ctx.stroke();
-      }
-
-      // Draw spectrum
-      ctx.fillStyle = accentHex + '40';
-      ctx.beginPath();
-      ctx.moveTo(0, height);
-
-      for(let i = 0; i < binCount; i++) {
-         const x = (i / binCount) * width;
-         const val = data[i] / 255.0;
-         const y = height - (val * height);
-         ctx.lineTo(x, y);
-      }
-      ctx.lineTo(width, height);
-      ctx.closePath();
-      ctx.fill();
-
-      if (mode === 'Advanced') {
-          const tx = triggerPoint.x * width;
-          const ty = height - (triggerPoint.y * height);
-
-          ctx.beginPath();
-          ctx.moveTo(tx, 0);
-          ctx.lineTo(tx, height);
-          ctx.moveTo(0, ty);
-          ctx.lineTo(width, ty);
-          ctx.strokeStyle = accentHex;
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.arc(tx, ty, 6, 0, Math.PI * 2);
-          ctx.fillStyle = '#fff';
-          ctx.fill();
-      } else {
-          const evE = getConfig().lastEvalEnergy;
-          const evThresh = getConfig().lastEvalThresh;
-
-          const eY = height - (evE * height);
-          const tY = height - (evThresh * height);
-
-          ctx.beginPath();
-          ctx.setLineDash([5, 5]);
-          ctx.moveTo(0, tY);
-          ctx.lineTo(width, tY);
-          ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          const cx = (startX + endX) / 2;
-          ctx.beginPath();
-          ctx.arc(cx, eY, 6, 0, Math.PI * 2);
-          ctx.fillStyle = evE > evThresh ? accentHex : 'rgba(255,255,255,0.5)';
-          ctx.fill();
-      }
-    };
-    draw();
-    return () => cancelAnimationFrame(animationId);
-  }, [accentHex, triggerPoint, mode]);
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (mode !== 'Advanced') return;
-    isDragging.current = true;
-    updateTriggerFromEvent(e);
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging.current || mode !== 'Advanced') return;
-    updateTriggerFromEvent(e);
-  };
-
-  const handlePointerUp = () => {
-    isDragging.current = false;
-  };
-
-  const updateTriggerFromEvent = (e: React.PointerEvent) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
-
-    setTriggerPoint({ x, y });
-    const config = action === 'Meteor' ? engine.meteorTrigger : engine.pulseTrigger;
-    config.freqIndex = Math.floor(x * 512);
-    config.threshold = y;
-  };
-
-  // Detect if on mobile for responsive layout inside panel
-  const [isNarrow, setIsNarrow] = useState(false);
-  useEffect(() => {
-    const check = () => setIsNarrow(window.innerWidth < 600);
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
-
-  return (
-    <div className="absolute inset-0 z-[100] backdrop-blur-md bg-black/50 flex flex-col items-center justify-center pointer-events-auto">
-       <div className="w-full max-w-[800px] mx-2 border border-white/10 rounded-xl p-4 sm:p-8 transform transition-all shadow-2xl max-h-screen overflow-y-auto" style={{ background: 'rgba(5, 10, 15, 0.95)' }}>
-          <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
-             <div className="flex flex-wrap items-center gap-4">
-               <h2 className="text-lg sm:text-xl font-light tracking-widest text-white">频率触发</h2>
-               <div className="flex flex-wrap items-center gap-4">
-                 <label className="flex items-center gap-2 cursor-pointer">
-                   <input
-                     type="checkbox"
-                     checked={isEnabled}
-                     onChange={(e) => setIsEnabled(e.target.checked)}
-                     className="w-4 h-4 rounded-sm border-white/20 bg-black/50"
-                     style={{ accentColor: accentHex }}
-                   />
-                   <span className="text-[10px] uppercase tracking-widest text-white/50">启用</span>
-                 </label>
-
-                 {isEnabled && (
-                   <div className="flex items-center rounded overflow-hidden border border-white/10 text-[10px] uppercase tracking-widest">
-                     <button
-                       onClick={() => setAction('Pulse')}
-                       className={`px-3 py-1 transition-colors ${action === 'Pulse' ? 'text-black' : 'text-white/50 hover:bg-white/5'}`}
-                       style={{ backgroundColor: action === 'Pulse' ? accentHex : 'transparent' }}
-                     >
-                       Pulse
-                     </button>
-                     <button
-                       onClick={() => setAction('Meteor')}
-                       className={`px-3 py-1 transition-colors ${action === 'Meteor' ? 'text-black' : 'text-white/50 hover:bg-white/5'}`}
-                       style={{ backgroundColor: action === 'Meteor' ? accentHex : 'transparent' }}
-                     >
-                       Meteor
-                     </button>
-                   </div>
-                 )}
-               </div>
-             </div>
-             <button onClick={onClose} className="text-white/50 hover:text-white uppercase tracking-widest text-[10px]">关闭</button>
-          </div>
-
-          <div className="flex gap-2 mb-4 flex-wrap">
-            {presets.map(p => (
-               <button
-                  key={p}
-                  onClick={() => handleModeChange(p)}
-                  className={`px-3 py-1.5 text-[10px] uppercase tracking-widest rounded-sm border transition-colors ${
-                     mode === p ? 'bg-white/10 text-white border-white/20' : 'border-transparent text-white/40 hover:text-white hover:bg-white/5'
-                  }`}
-               >
-                  {p}
-               </button>
-            ))}
-          </div>
-
-          <p className="text-[11px] text-white/40 mb-6 font-mono leading-relaxed">
-            {mode === 'Advanced'
-              ? "Drag the crosshair to set the target frequency (X) and threshold (Y).\nWhen the spectrum exceeds this threshold, a visual pulse is triggered."
-              : `Dynamic ${mode} detection enabled. Pulses trigger when instantaneous energy significantly exceeds the rolling average of this specific frequency band.`}
-          </p>
-          <div className={`relative w-full aspect-[2/1] bg-black/50 border border-white/5 rounded overflow-hidden ${mode === 'Advanced' ? 'cursor-crosshair' : ''}`}>
-            <canvas
-              ref={canvasRef}
-              width={800}
-              height={400}
-              className="w-full h-full block"
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerLeave={handlePointerUp}
-            />
-          </div>
-
-          {mode === 'Auto Beat' && (
-            <div className="mt-6 sm:mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-               <div className="flex flex-col gap-2">
-                 <div className="flex justify-between uppercase tracking-widest text-[10px] text-white/50">
-                    <span>灵敏度</span>
-                    <span style={{ color: accentHex }}>{sensitivity.toFixed(2)}</span>
-                 </div>
-                 <input type="range" min="0" max="1" step="0.05" value={sensitivity} onChange={e => setSensitivity(parseFloat(e.target.value))} className="w-full accent-current h-1" style={{ accentColor: accentHex }}/>
-               </div>
-               <div className="flex flex-col gap-2">
-                 <div className="flex justify-between uppercase tracking-widest text-[10px] text-white/50">
-                    <span>冷却(帧)</span>
-                    <span style={{ color: accentHex }}>{cooldown}</span>
-                 </div>
-                 <input type="range" min="0" max="300" step="1" value={cooldown} onChange={e => setCooldown(parseInt(e.target.value))} className="w-full accent-current h-1" style={{ accentColor: accentHex }}/>
-               </div>
-               <div className="flex flex-col gap-2">
-                 <div className="flex justify-between uppercase tracking-widest text-[10px] text-white/50">
-                    <span>频率范围 ({bandStart} - {bandEnd})</span>
-                 </div>
-                 <div className="flex gap-2">
-                   <input type="range" min="0" max="250" step="1" value={bandStart} onChange={e => setBandStart(Math.min(parseInt(e.target.value), bandEnd - 1))} className="w-1/2 accent-current h-1" style={{ accentColor: accentHex }}/>
-                   <input type="range" min="2" max="256" step="1" value={bandEnd} onChange={e => setBandEnd(Math.max(parseInt(e.target.value), bandStart + 1))} className="w-1/2 accent-current h-1" style={{ accentColor: accentHex }}/>
-                 </div>
-               </div>
-               <div className="flex flex-col gap-2">
-                 <div className="flex justify-between uppercase tracking-widest text-[10px] text-white/50">
-                    <span>脉冲强度</span>
-                    <span style={{ color: accentHex }}>{pulseStrength.toFixed(2)}</span>
-                 </div>
-                 <input type="range" min="0" max="5" step="0.1" value={pulseStrength} onChange={e => setPulseStrength(parseFloat(e.target.value))} className="w-full accent-current h-1" style={{ accentColor: accentHex }}/>
-               </div>
-            </div>
-          )}
-       </div>
-    </div>
-  );
-}
-
-/* ==================== STATS PANEL ==================== */
-
-function StatsPanel({ accentHex }: { accentHex: string }) {
-  const [data, setData] = useState({ bass: 0, mid: 0, treble: 0, energy: 0 });
-
-  useEffect(() => {
-    let animationFrameId: number;
-    const poll = () => {
-      setData(engine.getAudioData());
-      animationFrameId = requestAnimationFrame(poll);
-    };
-    poll();
-    return () => cancelAnimationFrame(animationFrameId);
-  }, []);
-
-  return (
-    <div className="flex gap-6 sm:gap-10">
-      <StatBox label="Bass" value={data.bass} accentHex={accentHex} />
-      <StatBox label="Mid" value={data.mid} accentHex={accentHex} />
-      <StatBox label="Treble" value={data.treble} accentHex={accentHex} />
-      <StatBox label="Energy" value={data.energy} accentHex={accentHex} />
-    </div>
-  );
-}
-
-function StatBox({ label, value, accentHex }: { label: string, value: number, accentHex: string }) {
-  const displayValue = (value * 100).toFixed(1);
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="text-[9px] uppercase tracking-[0.15em] opacity-40">{label}</div>
-      <div className="font-mono text-[14px]" style={{ color: accentHex }}>{displayValue}</div>
-      <div className={`${isMobile ? 'w-[60px]' : 'w-[100px]'} h-[2px] relative bg-white/10`}>
-        <div
-          className="absolute h-full transition-all duration-75"
-          style={{ backgroundColor: accentHex, width: `${Math.min(100, value * 100)}%`, boxShadow: `0 0 8px ${accentHex}88` }}
-        />
-      </div>
-    </div>
-  );
-}
